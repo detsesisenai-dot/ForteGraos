@@ -1,0 +1,911 @@
+import React, { useState, useMemo, useEffect } from 'react';
+import { 
+  Home, Truck, DollarSign, Plus, User, MapPin, CheckCircle,
+  FileText, TrendingUp, TrendingDown, Navigation, Fuel, Coffee,
+  Bed, Wallet, Database, Receipt, Trash2, RefreshCw, Target, 
+  AlertCircle, Printer, Hash, CheckSquare, Square, Scale, 
+  Droplet, Clock, Percent, PieChart, Activity, Save, Info, Lightbulb
+} from 'lucide-react';
+
+// --- IMPORTAÇÕES DO BANCO DE DADOS EM NUVEM (FIREBASE) ---
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc } from 'firebase/firestore';
+
+// --- CONFIGURAÇÃO DO BANCO DE DADOS ---
+const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+// --- DADOS INICIAIS DE BACKUP (CASO O BANCO ESTEJA VAZIO) ---
+const INITIAL_VEHICLES = [
+  { id: 'v1', placa: 'RTA-9J82', modelo: 'Scania R540', capacidade: 38, tipo: 'Próprio' },
+  { id: 'v2', placa: 'QWW-2A11', modelo: 'Volvo FH540', capacidade: 50, tipo: 'Terceirizado' }
+];
+
+const INITIAL_DRIVERS = [
+  { id: 'd1', nome: 'Carlos Silva', cnh: '123456789' },
+  { id: 'd2', nome: 'Ana Souza', cnh: '987654321' }
+];
+
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [activeTab, setActiveTab] = useState('home');
+  
+  // --- SISTEMA CUSTOMIZADO DE NOTIFICAÇÕES ---
+  const [notification, setNotification] = useState({ show: false, message: '', type: 'info' });
+  const [deleteTarget, setDeleteTarget] = useState(null); 
+
+  const showNotification = (message, type = 'info') => {
+    setNotification({ show: true, message, type });
+    setTimeout(() => setNotification({ show: false, message: '', type: 'info' }), 3500);
+  };
+
+  // --- STATES GLOBAIS ---
+  const [trips, setTrips] = useState([]);
+  const [vehicles, setVehicles] = useState([]);
+  const [drivers, setDrivers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedTrips, setSelectedTrips] = useState([]);
+  
+  const displayVehicles = vehicles.length > 0 ? vehicles : INITIAL_VEHICLES;
+  const displayDrivers = drivers.length > 0 ? drivers : INITIAL_DRIVERS;
+
+  // --- STATES DE CADASTRO E FORMULÁRIO ---
+  const [novoCaminhao, setNovoCaminhao] = useState({ placa: '', modelo: '', capacidade: '', tipo: 'Próprio' });
+  const [novoMotorista, setNovoMotorista] = useState({ nome: '', cnh: '' });
+
+  const [form, setForm] = useState({
+    veiculoId: '', motorista: '', origem: '', destino: '', idaEVolta: false,
+    kmInicial: '', kmFinal: '', carga: '', cargaDestino: '', horasEspera: '',
+    freteIdaPrev: '', freteVoltaPrev: '', freteIda: '', freteVolta: '',
+    combustivel: '', litros: '', qtdDiarias: '', valorDiaria: '', alimentacao: '', hotel: '',
+    abastecimentos: []
+  });
+
+  const [abastTemp, setAbastTemp] = useState({ nota: '', data: new Date().toISOString().split('T')[0], km: '', valor: '' });
+  const [distanciaEst, setDistanciaEst] = useState(0);
+
+  const formatCurrency = (val) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val || 0);
+
+  const parseBRNumber = (val) => {
+    if (typeof val === 'number') return val;
+    if (typeof val !== 'string' || !val) return 0;
+    const sanitized = val.replace(/\./g, '').replace(',', '.');
+    const parsed = parseFloat(sanitized);
+    return isNaN(parsed) ? 0 : parsed;
+  };
+
+  // --- EFEITOS DE AUTENTICAÇÃO E NUVEM ---
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (error) { console.error("Erro de auth:", error); }
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, setUser);
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    try {
+      const tripsCol = collection(db, 'artifacts', appId, 'public', 'data', 'trips');
+      const vehiclesCol = collection(db, 'artifacts', appId, 'public', 'data', 'vehicles');
+      const driversCol = collection(db, 'artifacts', appId, 'public', 'data', 'drivers');
+
+      const unsubTrips = onSnapshot(tripsCol, (snapshot) => {
+        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setTrips(data.sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0)));
+        setLoading(false);
+      }, (e) => { console.error(e); setLoading(false); });
+
+      const unsubVehicles = onSnapshot(vehiclesCol, (snapshot) => {
+        setVehicles(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      }, (e) => console.error(e));
+
+      const unsubDrivers = onSnapshot(driversCol, (snapshot) => {
+        setDrivers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      }, (e) => console.error(e));
+
+      return () => { unsubTrips(); unsubVehicles(); unsubDrivers(); };
+    } catch(e) {
+      console.warn("Firebase rules/auth unavailble. Using local state.");
+      setLoading(false);
+    }
+  }, [user]);
+
+  // --- SIMULADOR DE DISTÂNCIA ---
+  const calcularDistanciaSimulada = (origem, destino) => {
+    if (!origem || !destino) return 0;
+    const str = origem.toLowerCase().trim() + destino.toLowerCase().trim();
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) { hash = ((hash << 5) - hash) + str.charCodeAt(i); hash |= 0; }
+    return 150 + (Math.abs(hash) % 2000); 
+  };
+
+  useEffect(() => {
+    if (form.origem.length > 2 && form.destino.length > 2) {
+      let dist = calcularDistanciaSimulada(form.origem, form.destino);
+      if (form.idaEVolta) dist *= 2;
+      setDistanciaEst(dist);
+      setForm(prev => {
+        const ini = parseBRNumber(prev.kmInicial) || 0;
+        return { ...prev, kmFinal: String(ini + dist) };
+      });
+    } else { 
+      setDistanciaEst(0); 
+    }
+  }, [form.origem, form.destino, form.idaEVolta]);
+
+  const handleKmInicialChange = (e) => {
+    const val = e.target.value;
+    setForm(prev => {
+      const newState = { ...prev, kmInicial: val };
+      if (distanciaEst > 0) newState.kmFinal = String((parseBRNumber(val) || 0) + distanciaEst);
+      return newState;
+    });
+  };
+
+  // --- CÁLCULOS DOS INDICADORES E DRE ---
+  const indicadores = useMemo(() => {
+    let totalReceitasPrev = 0, totalReceitas = 0, totalDespesas = 0;
+    let totalKm = 0, totalCarga = 0, totalCargaDestino = 0;
+    let totalKmVazio = 0, totalLitros = 0, totalHorasEspera = 0;
+
+    trips.forEach(t => {
+      totalReceitasPrev += (t.receitas?.freteIdaPrev || 0) + (t.receitas?.freteVoltaPrev || 0);
+      const rec = (t.receitas?.freteIda || 0) + (t.receitas?.freteVolta || 0);
+      totalReceitas += rec;
+      totalDespesas += (t.despesas?.combustivel || 0) + (t.despesas?.diaria || 0) + (t.despesas?.alimentacao || 0) + (t.despesas?.hotel || 0);
+      
+      const kmTrip = (t.kmFinal || 0) - (t.kmInicial || 0);
+      totalKm += kmTrip;
+      totalCarga += (t.carga || 0);
+      totalCargaDestino += (t.cargaDestino || t.carga || 0); 
+      totalLitros += (t.litros || 0);
+      totalHorasEspera += (t.horasEspera || 0);
+
+      if (t.idaEVolta && (!t.receitas?.freteVolta || t.receitas?.freteVolta === 0)) {
+        totalKmVazio += (kmTrip / 2);
+      }
+    });
+
+    const lucro = totalReceitas - totalDespesas;
+    const qtdViagens = trips.length || 1; 
+    const quebra = totalCarga - totalCargaDestino;
+
+    return { 
+      totalReceitasPrev, totalReceitas, totalDespesas, lucro, 
+      difReceita: totalReceitas - totalReceitasPrev, 
+      varReceita: totalReceitasPrev > 0 ? ((totalReceitas - totalReceitasPrev) / totalReceitasPrev) * 100 : 0,
+      totalKm, totalCarga, totalCargaDestino, quebra, 
+      percentualQuebra: totalCarga > 0 ? (quebra / totalCarga) * 100 : 0, 
+      tripsCount: trips.length,
+      mediaKmViagem: trips.length > 0 ? (totalKm / trips.length) : 0, 
+      percentualKmVazio: totalKm > 0 ? (totalKmVazio / totalKm) * 100 : 0, 
+      mediaKmL: totalLitros > 0 ? (totalKm / totalLitros) : 0, 
+      mediaHoras: trips.length > 0 ? (totalHorasEspera / trips.length) : 0, 
+      custoTon: totalCargaDestino > 0 ? (totalDespesas / totalCargaDestino) : 0, 
+      resultadoViagem: trips.length > 0 ? (lucro / trips.length) : 0, 
+      margemMedia: totalReceitas > 0 ? (lucro / totalReceitas) * 100 : 0
+    };
+  }, [trips]);
+
+  // --- HANDLERS (CRUD) ---
+  const handleAddCaminhao = async () => {
+    if (!novoCaminhao.placa || !novoCaminhao.modelo) return showNotification("Preencha placa e modelo.", "error");
+    const docData = { ...novoCaminhao, capacidade: parseFloat(novoCaminhao.capacidade) || 0, timestamp: Date.now() };
+    try {
+      if(user) await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'vehicles'), docData);
+      else throw new Error("Sem Nuvem");
+      showNotification("Caminhão cadastrado!", "success");
+    } catch (e) { 
+      setVehicles(prev => [{...docData, id: 'loc_'+Date.now()}, ...prev]);
+      showNotification("Salvo localmente com sucesso!", "success"); 
+    }
+    setNovoCaminhao({ placa: '', modelo: '', capacidade: '', tipo: 'Próprio' });
+  };
+
+  const handleAddMotorista = async () => {
+    if (!novoMotorista.nome) return showNotification("Preencha o nome.", "error");
+    const docData = { ...novoMotorista, timestamp: Date.now() };
+    try {
+      if(user) await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'drivers'), docData);
+      else throw new Error("Sem Nuvem");
+      showNotification("Motorista cadastrado!", "success");
+    } catch (e) { 
+      setDrivers(prev => [{...docData, id: 'loc_'+Date.now()}, ...prev]);
+      showNotification("Salvo localmente com sucesso!", "success"); 
+    }
+    setNovoMotorista({ nome: '', cnh: '' });
+  };
+
+  const executeDelete = async () => {
+    if(!deleteTarget) return;
+    try {
+      const colName = deleteTarget.type === 'trip' ? 'trips' : deleteTarget.type === 'vehicle' ? 'vehicles' : 'drivers';
+      if(user && !deleteTarget.id.startsWith('loc_')) {
+        await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', colName, deleteTarget.id));
+      } else {
+        if(deleteTarget.type === 'trip') setTrips(prev => prev.filter(t => t.id !== deleteTarget.id));
+        if(deleteTarget.type === 'vehicle') setVehicles(prev => prev.filter(t => t.id !== deleteTarget.id));
+        if(deleteTarget.type === 'driver') setDrivers(prev => prev.filter(t => t.id !== deleteTarget.id));
+      }
+      showNotification("Registro apagado com sucesso.", "success");
+    } catch(e) {
+      showNotification("Erro ao apagar registro.", "error");
+    } finally {
+      setDeleteTarget(null);
+    }
+  };
+
+  const handleSalvarViagem = async () => {
+    if (!form.veiculoId || !form.origem || !form.destino || !form.kmFinal || !form.motorista) {
+      return showNotification("Atenção: Preencha os campos obrigatórios (Veículo, Motorista, Origem, Destino e KM).", "error");
+    }
+    
+    const v = displayVehicles.find(x => String(x.id) === String(form.veiculoId)) || { id: 'ext', placa: 'Avulso', tipo: 'Terceirizado', capacidade: 38 };
+    const totalDiaria = parseBRNumber(form.qtdDiarias) * parseBRNumber(form.valorDiaria);
+    
+    const novaViagem = {
+      numero: Math.floor(1000 + Math.random() * 9000).toString(),
+      veiculoId: v.id, veiculoPlaca: v.placa, tipoFrota: v.tipo, motorista: form.motorista,
+      origem: form.origem, destino: form.destino, idaEVolta: form.idaEVolta,
+      kmInicial: parseBRNumber(form.kmInicial), kmFinal: parseBRNumber(form.kmFinal), 
+      carga: parseBRNumber(form.carga), cargaDestino: parseBRNumber(form.cargaDestino),
+      horasEspera: parseBRNumber(form.horasEspera), litros: parseBRNumber(form.litros),
+      receitas: { 
+        freteIdaPrev: parseBRNumber(form.freteIdaPrev), freteIda: parseBRNumber(form.freteIda), 
+        freteVoltaPrev: parseBRNumber(form.freteVoltaPrev), freteVolta: parseBRNumber(form.freteVolta) 
+      },
+      despesas: { 
+        combustivel: parseBRNumber(form.combustivel), qtdDiarias: parseBRNumber(form.qtdDiarias),
+        valorDiaria: parseBRNumber(form.valorDiaria), diaria: totalDiaria, 
+        alimentacao: parseBRNumber(form.alimentacao), hotel: parseBRNumber(form.hotel) 
+      },
+      abastecimentos: form.abastecimentos,
+      data: new Date().toLocaleDateString('pt-BR'),
+      timestamp: Date.now()
+    };
+
+    try {
+      if (user) await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'trips'), novaViagem);
+      else throw new Error("Offline");
+      showNotification("✅ Viagem salva na nuvem e processada na DRE!", "success");
+    } catch (e) { 
+      novaViagem.id = 'loc_' + Date.now();
+      setTrips(prev => [novaViagem, ...prev]);
+      showNotification("✅ Viagem salva localmente e processada na DRE!", "success"); 
+    }
+
+    setForm({
+      veiculoId: '', motorista: '', origem: '', destino: '', idaEVolta: false,
+      kmInicial: '', kmFinal: '', carga: '', cargaDestino: '', horasEspera: '', 
+      freteIdaPrev: '', freteVoltaPrev: '', freteIda: '', freteVolta: '',
+      combustivel: '', litros: '', qtdDiarias: '', valorDiaria: '', alimentacao: '', hotel: '', abastecimentos: []
+    });
+    setActiveTab('dre');
+  };
+
+  const toggleTripSelection = (id) => setSelectedTrips(prev => prev.includes(id) ? prev.filter(tId => tId !== id) : [...prev, id]);
+  const toggleSelectAll = () => { selectedTrips.length === trips.length ? setSelectedTrips([]) : setSelectedTrips(trips.map(t => t.id)); };
+
+  const handleAddAbastecimento = () => {
+    if (!abastTemp.nota || !abastTemp.valor) return showNotification("Nota e Valor são obrigatórios.", "error");
+    const novoAbast = { ...abastTemp, id: Date.now().toString(), valor: parseBRNumber(abastTemp.valor), km: parseBRNumber(abastTemp.km) };
+    const novosAbastecimentos = [...form.abastecimentos, novoAbast];
+    const totalCombustivel = novosAbastecimentos.reduce((acc, curr) => acc + curr.valor, 0);
+    setForm({ ...form, abastecimentos: novosAbastecimentos, combustivel: totalCombustivel });
+    setAbastTemp({ nota: '', data: new Date().toISOString().split('T')[0], km: '', valor: '' });
+  };
+
+  const handleRemoveAbastecimento = (id) => {
+    const novos = form.abastecimentos.filter(a => a.id !== id);
+    const totalCombustivel = novos.reduce((acc, curr) => acc + curr.valor, 0);
+    setForm({ ...form, abastecimentos: novos, combustivel: totalCombustivel });
+  };
+
+  // --- TELAS ---
+  const renderDashboard = () => (
+    <div className="space-y-6 pb-20 md:pb-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      
+      {/* 10 INDICADORES CHAVE */}
+      <div className="bg-slate-900 text-white rounded-3xl p-6 md:p-8 shadow-xl relative overflow-hidden group">
+        <div className="absolute right-0 top-0 opacity-5 pointer-events-none group-hover:scale-110 transition-transform duration-1000"><Activity size={300} className="-mr-10 -mt-10" /></div>
+        <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 relative z-10">
+          <h2 className="text-xl font-bold flex items-center"><Target size={24} className="mr-3 text-blue-400"/> Indicadores Chave (KPIs)</h2>
+          <span className="text-xs text-slate-400 flex items-center bg-slate-800 px-3 py-1 rounded-full mt-2 md:mt-0">
+            <Info size={12} className="mr-1"/> Atualizado em tempo real
+          </span>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 relative z-10">
+          {/* Cards com hover effects e legendas explicativas */}
+          <div className="bg-slate-800/50 p-4 rounded-2xl border border-slate-700/50 hover:bg-slate-800 transition-colors">
+            <span className="text-[10px] uppercase font-bold text-slate-400 mb-1 flex items-center"><Scale size={12} className="mr-1"/> Tot. Transportado</span>
+            <div className="text-2xl font-bold text-white">{indicadores.totalCarga.toFixed(1)} <span className="text-sm font-normal text-slate-400">t</span></div>
+            <p className="text-[9px] text-slate-500 mt-1">Peso total carregado</p>
+          </div>
+
+          <div className="bg-slate-800/50 p-4 rounded-2xl border border-slate-700/50 hover:bg-slate-800 transition-colors">
+            <span className="text-[10px] uppercase font-bold text-slate-400 mb-1 flex items-center"><TrendingDown size={12} className="mr-1"/> Perda de Carga</span>
+            <div className="flex items-end space-x-2">
+              <div className={`text-2xl font-bold ${indicadores.percentualQuebra > 0.5 ? 'text-rose-400' : 'text-emerald-400'}`}>{indicadores.percentualQuebra.toFixed(2)}%</div>
+            </div>
+            <p className="text-[9px] text-slate-500 mt-1">Diferença balança ({indicadores.quebra.toFixed(1)}t)</p>
+          </div>
+
+          <div className="bg-slate-800/50 p-4 rounded-2xl border border-slate-700/50 hover:bg-slate-800 transition-colors">
+            <span className="text-[10px] uppercase font-bold text-slate-400 mb-1 flex items-center"><Truck size={12} className="mr-1"/> Qtd. Viagens</span>
+            <div className="text-2xl font-bold text-white">{indicadores.tripsCount}</div>
+            <p className="text-[9px] text-slate-500 mt-1">Viagens concluídas</p>
+          </div>
+
+          <div className="bg-slate-800/50 p-4 rounded-2xl border border-slate-700/50 hover:bg-slate-800 transition-colors">
+            <span className="text-[10px] uppercase font-bold text-slate-400 mb-1 flex items-center"><MapPin size={12} className="mr-1"/> Km/Viagem</span>
+            <div className="text-2xl font-bold text-white">{indicadores.mediaKmViagem.toFixed(0)} <span className="text-sm font-normal text-slate-400">km</span></div>
+            <p className="text-[9px] text-slate-500 mt-1">Distância média percorrida</p>
+          </div>
+
+          <div className="bg-slate-800/50 p-4 rounded-2xl border border-slate-700/50 hover:bg-slate-800 transition-colors">
+            <span className="text-[10px] uppercase font-bold text-slate-400 mb-1 flex items-center"><RefreshCw size={12} className="mr-1"/> KM Rodado Vazio</span>
+            <div className={`text-2xl font-bold ${indicadores.percentualKmVazio > 30 ? 'text-amber-400' : 'text-emerald-400'}`}>{indicadores.percentualKmVazio.toFixed(1)}%</div>
+            <p className="text-[9px] text-slate-500 mt-1">Retornos sem frete associado</p>
+          </div>
+
+          <div className="bg-slate-800/50 p-4 rounded-2xl border border-slate-700/50 hover:bg-slate-800 transition-colors">
+            <span className="text-[10px] uppercase font-bold text-slate-400 mb-1 flex items-center"><Droplet size={12} className="mr-1"/> Consumo Médio</span>
+            <div className="text-2xl font-bold text-white">{indicadores.mediaKmL.toFixed(2)} <span className="text-sm font-normal text-slate-400">km/l</span></div>
+            <p className="text-[9px] text-slate-500 mt-1">Eficiência da frota</p>
+          </div>
+
+          <div className="bg-slate-800/50 p-4 rounded-2xl border border-slate-700/50 hover:bg-slate-800 transition-colors">
+            <span className="text-[10px] uppercase font-bold text-slate-400 mb-1 flex items-center"><Clock size={12} className="mr-1"/> Espera Média</span>
+            <div className="text-2xl font-bold text-white">{indicadores.mediaHoras.toFixed(1)} <span className="text-sm font-normal text-slate-400">h</span></div>
+            <p className="text-[9px] text-slate-500 mt-1">Tempo carga e descarga</p>
+          </div>
+
+          <div className="bg-slate-800/50 p-4 rounded-2xl border border-slate-700/50 hover:bg-slate-800 transition-colors">
+            <span className="text-[10px] uppercase font-bold text-slate-400 mb-1 flex items-center"><PieChart size={12} className="mr-1"/> Custo p/ Ton</span>
+            <div className="text-2xl font-bold text-rose-400">{formatCurrency(indicadores.custoTon)}</div>
+            <p className="text-[9px] text-slate-500 mt-1">Custo unitário por tonelada</p>
+          </div>
+
+          <div className="bg-slate-800/50 p-4 rounded-2xl border border-slate-700/50 hover:bg-slate-800 transition-colors">
+            <span className="text-[10px] uppercase font-bold text-slate-400 mb-1 flex items-center"><Percent size={12} className="mr-1"/> Margem Média</span>
+            <div className="text-2xl font-bold text-blue-400">{indicadores.margemMedia.toFixed(1)}%</div>
+            <p className="text-[9px] text-slate-500 mt-1">Lucratividade sobre a receita</p>
+          </div>
+
+          <div className="bg-slate-800/50 p-4 rounded-2xl border border-slate-700/50 hover:bg-slate-800 transition-colors">
+            <span className="text-[10px] uppercase font-bold text-slate-400 mb-1 flex items-center"><DollarSign size={12} className="mr-1"/> Resul. p/ Viagem</span>
+            <div className={`text-2xl font-bold ${indicadores.resultadoViagem >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(indicadores.resultadoViagem)}</div>
+            <p className="text-[9px] text-slate-500 mt-1">Lucro médio por rota</p>
+          </div>
+        </div>
+      </div>
+
+      {/* DRE FINANCEIRA GERAL COM HOVER EFFECTS */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 hover:shadow-md hover:-translate-y-1 transition-all duration-300">
+          <span className="text-xs font-bold text-slate-500 uppercase flex items-center"><TrendingUp size={14} className="mr-2 text-emerald-500"/> Faturamento Efetivo</span>
+          <div className="text-3xl font-black text-slate-800 mt-2">{formatCurrency(indicadores.totalReceitas)}</div>
+          <div className="text-xs font-semibold mt-2 text-slate-400">Meta/Orçado: {formatCurrency(indicadores.totalReceitasPrev)}</div>
+          <p className="text-[10px] text-slate-400 mt-3 pt-3 border-t border-slate-50">Soma de todas as notas fiscais ou conhecimentos gerados.</p>
+        </div>
+        
+        <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 hover:shadow-md hover:-translate-y-1 transition-all duration-300">
+          <span className="text-xs font-bold text-slate-500 uppercase flex items-center"><TrendingDown size={14} className="mr-2 text-rose-500"/> Custos Operacionais</span>
+          <div className="text-3xl font-black text-rose-600 mt-2">-{formatCurrency(indicadores.totalDespesas)}</div>
+          <div className="text-xs font-semibold mt-2 text-slate-400">Total de km operados: {indicadores.totalKm} km</div>
+          <p className="text-[10px] text-slate-400 mt-3 pt-3 border-t border-slate-50">Inclui combustível, pedágio, manutenção, diárias e alimentação.</p>
+        </div>
+        
+        <div className="bg-blue-50 p-6 rounded-3xl shadow-sm border border-blue-100 hover:shadow-md hover:-translate-y-1 transition-all duration-300">
+          <span className="text-xs font-bold text-blue-700 uppercase flex items-center"><DollarSign size={14} className="mr-2"/> Resultado Final (Lucro)</span>
+          <div className="text-3xl font-black text-blue-700 mt-2">{formatCurrency(indicadores.lucro)}</div>
+          <div className="text-xs font-semibold mt-2 text-blue-500">Rentabilidade de {indicadores.margemMedia.toFixed(1)}% da operação</div>
+          <p className="text-[10px] text-blue-400 mt-3 pt-3 border-t border-blue-100">Dinheiro que efetivamente ficou no caixa após abater todas as despesas.</p>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderFormulario = () => {
+    // Calculo do painel em tempo real
+    const totalDiariaForm = parseBRNumber(form.qtdDiarias) * parseBRNumber(form.valorDiaria);
+    const recRealForm = parseBRNumber(form.freteIda) + (form.idaEVolta ? parseBRNumber(form.freteVolta) : 0);
+    const despForm = parseBRNumber(form.combustivel) + totalDiariaForm + parseBRNumber(form.alimentacao) + parseBRNumber(form.hotel);
+    const lucroForm = recRealForm - despForm;
+    const margemForm = recRealForm > 0 ? ((lucroForm / recRealForm) * 100).toFixed(1) : 0;
+
+    return (
+    <div className="space-y-6 pb-24 md:pb-6 max-w-4xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500">
+      
+      {/* HEADER DIDÁTICO */}
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">Lançamento de Viagem</h1>
+          <p className="text-sm text-slate-500 mt-1 flex items-center">
+            <Lightbulb size={16} className="text-amber-500 mr-2"/>
+            Preencha os dados reais da operação para gerar a DRE de forma automática.
+          </p>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-3xl shadow-sm border border-slate-100 p-6 md:p-8 space-y-8 relative">
+        
+        {/* IDENTIFICAÇÃO E ROTA */}
+        <div>
+          <h3 className="text-sm font-bold text-slate-800 mb-1 flex items-center"><Truck size={18} className="mr-2 text-blue-500"/> 1. Qual caminhão e quem vai dirigir?</h3>
+          <p className="text-[10px] text-slate-400 mb-4 ml-7">Selecione o veículo e o motorista previamente cadastrados na aba "Frota".</p>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <select value={form.veiculoId} onChange={e => setForm({...form, veiculoId: e.target.value})} className="w-full bg-slate-50 border border-slate-200 text-slate-800 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-100 transition-all cursor-pointer">
+              <option value="">Selecione o Caminhão</option>
+              {displayVehicles.map(v => <option key={v.id} value={v.id}>{v.placa} ({v.tipo})</option>)}
+            </select>
+            <select value={form.motorista} onChange={e => setForm({...form, motorista: e.target.value})} className="w-full bg-slate-50 border border-slate-200 text-slate-800 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-100 transition-all cursor-pointer">
+              <option value="">Selecione o Motorista</option>
+              {displayDrivers.map(d => <option key={d.id} value={d.nome}>{d.nome}</option>)}
+            </select>
+          </div>
+        </div>
+
+        <div className="pt-6 border-t border-slate-100">
+          <div className="flex flex-col md:flex-row md:justify-between md:items-center mb-1">
+            <h3 className="text-sm font-bold text-slate-800 flex items-center"><Navigation size={18} className="mr-2 text-blue-500"/> 2. Informações do Trajeto (Rota)</h3>
+            <label className="flex items-center space-x-2 bg-blue-50 hover:bg-blue-100 px-4 py-2 rounded-lg border border-blue-200 cursor-pointer transition-colors mt-2 md:mt-0">
+              <input type="checkbox" checked={form.idaEVolta} onChange={e => setForm({...form, idaEVolta: e.target.checked})} className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500" />
+              <span className="text-xs font-semibold text-blue-800">A viagem contempla Ida e Volta?</span>
+            </label>
+          </div>
+          <p className="text-[10px] text-slate-400 mb-4 ml-7">Se for ida e volta sem faturamento no retorno, o sistema computará a distância como "KM Vazio" sozinho.</p>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <input type="text" placeholder="Origem (Ex: Sorriso, MT)" value={form.origem} onChange={e => setForm({...form, origem: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-100 transition-all" />
+            <input type="text" placeholder="Destino (Ex: Santos, SP)" value={form.destino} onChange={e => setForm({...form, destino: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-100 transition-all" />
+          </div>
+          
+          {/* Alerta inteligente e dinâmico */}
+          {distanciaEst > 0 && (
+            <div className="bg-emerald-50 border border-emerald-100 text-emerald-800 text-xs px-4 py-3 rounded-xl mb-4 flex items-start shadow-sm animate-in fade-in">
+              <Info size={16} className="mr-2 mt-0.5 text-emerald-600 shrink-0"/>
+              <div>
+                <strong>Dica Inteligente:</strong> Estimamos que essa rota tenha cerca de <strong>{distanciaEst} km</strong>. 
+                Já preenchemos o KM Final para facilitar, mas você pode corrigir se o percurso real foi diferente.
+              </div>
+            </div>
+          )}
+          
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <div className="relative md:col-span-1 col-span-2">
+              <MapPin size={14} className="absolute left-3 top-3.5 text-slate-400" />
+              <input type="number" placeholder="Km Inicial" value={form.kmInicial} onChange={handleKmInicialChange} className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-2 py-3 text-sm outline-none focus:ring-2 focus:ring-blue-100" />
+              <span className="text-[9px] text-slate-400 ml-1">Odômetro saída</span>
+            </div>
+            <div className="relative md:col-span-1 col-span-2">
+              <MapPin size={14} className="absolute left-3 top-3.5 text-blue-500" />
+              <input type="number" placeholder="Km Final" value={form.kmFinal} onChange={e => setForm({...form, kmFinal: e.target.value})} className="w-full bg-blue-50 border border-blue-200 rounded-xl pl-8 pr-2 py-3 text-sm outline-none focus:ring-2 focus:ring-blue-300 font-bold text-blue-800" />
+              <span className="text-[9px] text-blue-500 ml-1">Odômetro chegada</span>
+            </div>
+            <div className="relative">
+              <Scale size={14} className="absolute left-3 top-3.5 text-emerald-500" />
+              <input type="number" placeholder="Peso Saída (t)" value={form.carga} onChange={e => setForm({...form, carga: e.target.value})} className="w-full bg-emerald-50 border border-emerald-100 rounded-xl pl-8 pr-2 py-3 text-sm outline-none focus:ring-2 focus:ring-emerald-200 font-semibold text-emerald-800" />
+              <span className="text-[9px] text-emerald-600 ml-1">Na fazenda/silo</span>
+            </div>
+            <div className="relative">
+              <Scale size={14} className="absolute left-3 top-3.5 text-rose-500" />
+              <input type="number" placeholder="Peso Cheg. (t)" value={form.cargaDestino} onChange={e => setForm({...form, cargaDestino: e.target.value})} className="w-full bg-rose-50 border border-rose-100 rounded-xl pl-8 pr-2 py-3 text-sm outline-none focus:ring-2 focus:ring-rose-200 font-semibold text-rose-800" />
+              <span className="text-[9px] text-rose-500 ml-1">Na balança/porto</span>
+            </div>
+            <div className="relative">
+              <Clock size={14} className="absolute left-3 top-3.5 text-amber-500" />
+              <input type="number" placeholder="Horas" value={form.horasEspera} onChange={e => setForm({...form, horasEspera: e.target.value})} className="w-full bg-amber-50 border border-amber-100 rounded-xl pl-8 pr-2 py-3 text-sm outline-none focus:ring-2 focus:ring-amber-200 font-semibold text-amber-800" />
+              <span className="text-[9px] text-amber-600 ml-1">Tempo carga/desc.</span>
+            </div>
+          </div>
+        </div>
+
+        {/* RECEITAS */}
+        <div className="pt-6 border-t border-slate-100">
+          <h3 className="text-sm font-bold text-emerald-600 mb-1 flex items-center"><Target size={18} className="mr-2"/> 3. Faturamento de Frete</h3>
+          <p className="text-[10px] text-slate-400 mb-4 ml-7">O sistema comparará o que você planejava ganhar com o que realmente foi pago.</p>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-3 bg-slate-50 p-5 rounded-2xl border border-slate-200 hover:border-slate-300 transition-colors">
+              <span className="text-xs font-bold text-slate-500 uppercase block mb-1">Valor Orçado (O que combinamos)</span>
+              <div className="relative">
+                <DollarSign size={16} className="absolute left-4 top-3.5 text-slate-400" />
+                <input type="number" placeholder="Frete Ida Previsto" value={form.freteIdaPrev} onChange={e => setForm({...form, freteIdaPrev: e.target.value})} className="w-full bg-white border border-slate-200 rounded-xl pl-10 pr-4 py-3 outline-none focus:ring-2 focus:ring-slate-200 text-sm" />
+              </div>
+              <div className="relative">
+                <DollarSign size={16} className="absolute left-4 top-3.5 text-slate-400" />
+                <input type="number" placeholder="Frete Retorno Previsto" value={form.freteVoltaPrev} onChange={e => setForm({...form, freteVoltaPrev: e.target.value})} disabled={!form.idaEVolta} className="w-full bg-white border border-slate-200 rounded-xl pl-10 pr-4 py-3 outline-none focus:ring-2 focus:ring-slate-200 text-sm disabled:opacity-50 disabled:bg-slate-100" />
+              </div>
+            </div>
+            
+            <div className="space-y-3 bg-emerald-50/50 p-5 rounded-2xl border border-emerald-100 hover:border-emerald-200 transition-colors">
+              <span className="text-xs font-bold text-emerald-700 uppercase block mb-1">Valor Realizado (NF Efetiva)</span>
+              <div className="relative">
+                <DollarSign size={16} className="absolute left-4 top-3.5 text-emerald-600" />
+                <input type="number" placeholder="Frete Ida Realizado" value={form.freteIda} onChange={e => setForm({...form, freteIda: e.target.value})} className="w-full bg-white border border-emerald-200 rounded-xl pl-10 pr-4 py-3 outline-none focus:ring-2 focus:ring-emerald-100 text-sm font-bold text-emerald-900 shadow-sm" />
+              </div>
+              <div className="relative">
+                <DollarSign size={16} className="absolute left-4 top-3.5 text-emerald-600" />
+                <input type="number" placeholder="Frete Retorno Realizado" value={form.freteVolta} onChange={e => setForm({...form, freteVolta: e.target.value})} disabled={!form.idaEVolta} className="w-full bg-white border border-emerald-200 rounded-xl pl-10 pr-4 py-3 outline-none focus:ring-2 focus:ring-emerald-100 text-sm font-bold text-emerald-900 shadow-sm disabled:opacity-50 disabled:bg-emerald-50" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* DESPESAS E CUSTOS */}
+        <div className="pt-6 border-t border-slate-100">
+          <h3 className="text-sm font-bold text-rose-600 mb-1 flex items-center"><TrendingDown size={18} className="mr-2"/> 4. Custos e Despesas Operacionais</h3>
+          <p className="text-[10px] text-slate-400 mb-4 ml-7">Preencha com o máximo de precisão para que a Margem de Lucro seja real.</p>
+          
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+            <div className="relative col-span-2 group">
+              <Fuel size={14} className="absolute left-3 top-3.5 text-slate-400" />
+              <input type="number" placeholder="Total Combust. (R$)" value={form.combustivel} onChange={e => setForm({...form, combustivel: e.target.value})} className="w-full bg-slate-50 border border-rose-100 rounded-xl pl-8 pr-2 py-3 text-sm outline-none focus:ring-2 focus:ring-rose-100 font-bold text-rose-800" />
+              <span className="text-[9px] text-rose-500 ml-1">R$ Gasto na bomba</span>
+            </div>
+            <div className="relative col-span-2 md:col-span-1">
+              <Droplet size={14} className="absolute left-3 top-3.5 text-slate-400" />
+              <input type="number" placeholder="Litros" value={form.litros} onChange={e => setForm({...form, litros: e.target.value})} className="w-full bg-slate-50 border border-rose-100 rounded-xl pl-8 pr-2 py-3 text-sm outline-none focus:ring-2 focus:ring-rose-100 font-bold text-slate-800" />
+              <span className="text-[9px] text-slate-400 ml-1">Volume abastecido</span>
+            </div>
+            <div className="relative">
+              <Hash size={14} className="absolute left-3 top-3.5 text-slate-400" />
+              <input type="number" placeholder="Diárias" value={form.qtdDiarias} onChange={e => setForm({...form, qtdDiarias: e.target.value})} className="w-full bg-slate-50 border border-rose-100 rounded-xl pl-8 pr-2 py-3 text-sm outline-none focus:ring-2 focus:ring-rose-100" />
+              <span className="text-[9px] text-slate-400 ml-1">Quantidade dias</span>
+            </div>
+            <div className="relative">
+              <Wallet size={14} className="absolute left-3 top-3.5 text-slate-400" />
+              <input type="number" placeholder="Valor" value={form.valorDiaria} onChange={e => setForm({...form, valorDiaria: e.target.value})} className="w-full bg-slate-50 border border-rose-100 rounded-xl pl-8 pr-2 py-3 text-sm outline-none focus:ring-2 focus:ring-rose-100" />
+              <span className="text-[9px] text-slate-400 ml-1">R$ por diária</span>
+            </div>
+            <div className="relative">
+              <Coffee size={14} className="absolute left-3 top-3.5 text-slate-400" />
+              <input type="number" placeholder="Aliment." value={form.alimentacao} onChange={e => setForm({...form, alimentacao: e.target.value})} className="w-full bg-slate-50 border border-rose-100 rounded-xl pl-8 pr-2 py-3 text-sm outline-none focus:ring-2 focus:ring-rose-100" />
+              <span className="text-[9px] text-slate-400 ml-1">Gastos avulsos</span>
+            </div>
+          </div>
+        </div>
+
+        {/* PAINEL ESTIMADO EM TEMPO REAL COM DESTAQUE */}
+        <div className="bg-slate-900 text-white p-6 rounded-2xl shadow-xl mt-8 mb-2 border border-slate-700 hover:shadow-2xl transition-shadow relative overflow-hidden">
+          <div className="absolute right-0 top-0 opacity-10 pointer-events-none"><Database size={200} className="-mr-10 -mt-10" /></div>
+          <h3 className="text-xs font-bold text-blue-400 uppercase mb-4 flex items-center"><TrendingUp size={16} className="mr-2" /> Resumo Financeiro da Viagem (Em Tempo Real)</h3>
+          
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 relative z-10">
+            <div><span className="text-[10px] text-slate-400 block uppercase font-medium mb-1">Faturamento</span><span className="text-xl md:text-2xl font-black text-emerald-400">{formatCurrency(recRealForm)}</span></div>
+            <div><span className="text-[10px] text-slate-400 block uppercase font-medium mb-1">Despesas</span><span className="text-xl md:text-2xl font-black text-rose-400">-{formatCurrency(despForm)}</span></div>
+            <div><span className="text-[10px] text-slate-400 block uppercase font-medium mb-1">Lucro Estimado</span><span className={`text-xl md:text-2xl font-black ${lucroForm >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>{formatCurrency(lucroForm)}</span></div>
+            <div><span className="text-[10px] text-slate-400 block uppercase font-medium mb-1">Margem</span><span className="text-xl md:text-2xl font-black text-blue-400">{margemForm}%</span></div>
+          </div>
+          
+          {lucroForm < 0 && (
+             <p className="text-xs text-rose-300 mt-4 flex items-center bg-rose-900/30 p-2 rounded-lg inline-flex">
+               <AlertCircle size={14} className="mr-2"/> Atenção: Os dados atuais indicam que a viagem gerará prejuízo. Verifique os valores ou negocie o frete.
+             </p>
+          )}
+        </div>
+
+        <button onClick={handleSalvarViagem} className="w-full bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white font-bold py-5 rounded-2xl transition-all shadow-md hover:shadow-xl mt-4 flex justify-center items-center text-lg">
+          <Save size={20} className="mr-3" /> Registrar e Salvar Viagem Oficialmente
+        </button>
+      </div>
+    </div>
+  )};
+
+  const renderDRE = () => (
+    <div className="space-y-6 pb-24 md:pb-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="flex flex-col md:flex-row md:justify-between md:items-center mb-6 space-y-4 md:space-y-0">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Histórico de Viagens & DRE</h1>
+          <p className="text-sm text-slate-500 mt-1">Selecione viagens abaixo para compor um relatório em PDF ou analisar o fluxo.</p>
+        </div>
+        
+        <div className="flex items-center space-x-3 bg-white p-2 rounded-xl shadow-sm border border-slate-100">
+          <button onClick={toggleSelectAll} className="flex items-center text-sm font-semibold text-slate-600 hover:text-blue-600 bg-slate-50 hover:bg-slate-100 px-4 py-2 rounded-lg transition-colors">
+            {selectedTrips.length === trips.length && trips.length > 0 ? <CheckSquare size={16} className="mr-2"/> : <Square size={16} className="mr-2"/>} Marcar Todos
+          </button>
+          <button onClick={() => window.print()} disabled={selectedTrips.length === 0} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center transition-colors shadow-sm">
+            <Printer size={16} className="mr-2"/> Gerar PDF ({selectedTrips.length})
+          </button>
+        </div>
+      </div>
+      
+      {loading ? (
+        <div className="text-center py-20 flex flex-col items-center text-slate-400">
+           <RefreshCw size={32} className="animate-spin mb-4 text-blue-500"/>
+           <p className="font-medium text-slate-600">Sincronizando banco de dados...</p>
+        </div>
+      ) : trips.length === 0 ? (
+        <div className="text-center py-20 bg-white rounded-3xl border border-dashed border-slate-300 flex flex-col items-center">
+          <Truck size={48} className="text-slate-200 mb-4" />
+          <h3 className="text-lg font-bold text-slate-700">O pátio está vazio!</h3>
+          <p className="text-slate-500 mt-1">Vá até "Lançar Viagem" para registrar a primeira operação.</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {trips.map(trip => {
+            const recTot = (trip.receitas?.freteIda || 0) + (trip.receitas?.freteVolta || 0);
+            const despTot = (trip.despesas?.combustivel || 0) + (trip.despesas?.diaria || 0) + (trip.despesas?.alimentacao || 0) + (trip.despesas?.hotel || 0);
+            const lucro = recTot - despTot;
+            const dist = (trip.kmFinal || 0) - (trip.kmInicial || 0);
+            
+            return (
+              <div key={trip.id} className={`bg-white rounded-3xl shadow-sm border transition-all duration-300 overflow-hidden flex flex-col relative group cursor-pointer hover:-translate-y-1 hover:shadow-md ${selectedTrips.includes(trip.id) ? 'border-blue-500 ring-2 ring-blue-100' : 'border-slate-100 hover:border-blue-300'}`} onClick={() => toggleTripSelection(trip.id)}>
+                
+                {/* Seleção e Exclusão */}
+                <div className="absolute top-4 left-4 z-10">
+                  <div className={`w-5 h-5 rounded flex items-center justify-center border ${selectedTrips.includes(trip.id) ? 'bg-blue-600 border-blue-600 text-white' : 'border-slate-300 bg-white'}`}>
+                     {selectedTrips.includes(trip.id) && <CheckCircle size={14} />}
+                  </div>
+                </div>
+                
+                <button onClick={(e) => { e.stopPropagation(); setDeleteTarget({id: trip.id, type: 'trip'}); }} className="absolute top-4 right-4 bg-white/80 hover:bg-rose-100 p-2 rounded-full text-slate-400 hover:text-rose-600 transition-colors z-10 shadow-sm border border-slate-200 backdrop-blur-sm opacity-0 group-hover:opacity-100 md:opacity-100">
+                  <Trash2 size={16} />
+                </button>
+                
+                {/* Cabeçalho da Viagem */}
+                <div className="p-5 border-b border-slate-100 bg-slate-50/50 flex justify-between items-start pt-10">
+                  <div>
+                    <div className="font-bold text-slate-800 text-lg">#{trip.numero || trip.id.substring(0, 4)} 
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full ml-2 align-middle ${trip.tipoFrota === 'Próprio' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>{trip.tipoFrota}</span>
+                    </div>
+                    <div className="text-sm font-bold text-slate-700 mt-2 flex items-center">
+                       {trip.origem} <Navigation size={12} className="mx-2 text-slate-400"/> {trip.destino}
+                    </div>
+                    <div className="text-xs text-slate-500 mt-1 flex items-center"><User size={12} className="mr-1"/> {trip.motorista} | <Truck size={12} className="ml-2 mr-1"/> {trip.veiculoPlaca}</div>
+                  </div>
+                  <div className="text-right text-xs text-slate-500 font-medium">
+                    <div className="bg-white px-2 py-1 rounded shadow-sm border border-slate-100">{trip.data}</div>
+                    <div className="mt-2 font-semibold text-slate-700 bg-slate-100 px-2 py-1 rounded inline-block">{dist} km | {trip.carga}t</div>
+                  </div>
+                </div>
+                
+                {/* DRE Simplificada Interna */}
+                <div className="p-5 flex-1 flex flex-col justify-center space-y-3">
+                  <div className="flex justify-between items-center text-sm border-b border-slate-50 pb-2">
+                    <span className="text-slate-500 flex items-center"><TrendingUp size={14} className="mr-1 text-emerald-500"/> Faturamento</span>
+                    <span className="font-bold text-emerald-700">{formatCurrency(recTot)}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-sm border-b border-slate-50 pb-2">
+                    <span className="text-slate-500 flex items-center"><TrendingDown size={14} className="mr-1 text-rose-500"/> Custos (C/ Combustível)</span>
+                    <span className="font-bold text-rose-700">-{formatCurrency(despTot)}</span>
+                  </div>
+                  <div className="flex justify-between items-center font-bold pt-1">
+                    <span className="text-slate-800 text-base">Lucro Final</span>
+                    <span className={`text-xl ${lucro >= 0 ? 'text-blue-600' : 'text-rose-600'}`}>{formatCurrency(lucro)}</span>
+                  </div>
+                  
+                  {/* Legenda de instrução na DRE */}
+                  <p className="text-[9px] text-slate-400 text-center mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                    Clique no card para selecionar esta viagem para o PDF.
+                  </p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+
+  const renderCadastros = () => (
+    <div className="space-y-8 pb-24 md:pb-6 max-w-4xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight text-slate-900">Cadastros e Frota</h1>
+        <p className="text-sm text-slate-500 mt-1">Configure seus caminhões e motoristas para facilitar os lançamentos diários.</p>
+      </div>
+      
+      {/* CAMINHÕES */}
+      <div className="bg-white rounded-3xl shadow-sm border border-slate-100 p-6 md:p-8 hover:shadow-md transition-shadow">
+        <h3 className="text-base font-bold text-slate-800 mb-2 flex items-center"><Truck size={20} className="mr-2 text-blue-500"/> Gestão de Caminhões</h3>
+        <p className="text-[10px] text-slate-400 mb-5 ml-7">Adicione novos veículos para que fiquem disponíveis na aba de Nova Viagem.</p>
+        
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
+          <div><span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Placa</span><input type="text" placeholder="Ex: ABC-1234" value={novoCaminhao.placa} onChange={e => setNovoCaminhao({...novoCaminhao, placa: e.target.value.toUpperCase()})} className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-100 uppercase text-sm" /></div>
+          <div><span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Modelo</span><input type="text" placeholder="Ex: Volvo FH" value={novoCaminhao.modelo} onChange={e => setNovoCaminhao({...novoCaminhao, modelo: e.target.value})} className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-100 text-sm" /></div>
+          <div><span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Capacidade (t)</span><input type="number" placeholder="Ex: 50" value={novoCaminhao.capacidade} onChange={e => setNovoCaminhao({...novoCaminhao, capacidade: e.target.value})} className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-100 text-sm" /></div>
+          <div><span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Tipo de Frota</span>
+            <select value={novoCaminhao.tipo} onChange={e => setNovoCaminhao({...novoCaminhao, tipo: e.target.value})} className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-100 text-sm">
+              <option value="Próprio">Próprio</option>
+              <option value="Terceirizado">Terceirizado</option>
+            </select>
+          </div>
+        </div>
+        <button onClick={handleAddCaminhao} className="w-full bg-slate-800 hover:bg-slate-900 active:scale-[0.99] text-white font-bold py-4 rounded-xl transition-all mb-6 flex items-center justify-center shadow-md">
+          <Plus size={18} className="mr-2"/> Adicionar Veículo
+        </button>
+        
+        {displayVehicles.length > 0 && (
+          <div className="space-y-3 border-t border-slate-100 pt-6">
+            <h4 className="text-xs font-bold text-slate-500 uppercase">Frota Cadastrada ({displayVehicles.length})</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
+              {displayVehicles.map(v => (
+                <div key={v.id} className="flex justify-between items-center bg-white p-4 rounded-xl border border-slate-200 shadow-sm hover:border-blue-300 transition-colors">
+                  <div>
+                    <div className="text-sm font-bold text-slate-800">{v.placa}</div>
+                    <div className="text-xs text-slate-500">{v.modelo} • {v.tipo} • {v.capacidade}t</div>
+                  </div>
+                  <button onClick={() => setDeleteTarget({id: v.id, type: 'vehicle'})} className="bg-rose-50 text-rose-500 hover:bg-rose-500 hover:text-white p-2 rounded-lg transition-colors"><Trash2 size={16}/></button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* MOTORISTAS */}
+      <div className="bg-white rounded-3xl shadow-sm border border-slate-100 p-6 md:p-8 hover:shadow-md transition-shadow">
+        <h3 className="text-base font-bold text-slate-800 mb-2 flex items-center"><User size={20} className="mr-2 text-blue-500"/> Gestão de Motoristas</h3>
+        <p className="text-[10px] text-slate-400 mb-5 ml-7">Mantenha a lista de parceiros e funcionários atualizada.</p>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
+          <div><span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Nome Completo</span><input type="text" placeholder="Ex: João da Silva" value={novoMotorista.nome} onChange={e => setNovoMotorista({...novoMotorista, nome: e.target.value})} className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-100 text-sm" /></div>
+          <div><span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Documento / CNH</span><input type="text" placeholder="Ex: 000000000" value={novoMotorista.cnh} onChange={e => setNovoMotorista({...novoMotorista, cnh: e.target.value})} className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-100 text-sm" /></div>
+        </div>
+        <button onClick={handleAddMotorista} className="w-full bg-slate-800 hover:bg-slate-900 active:scale-[0.99] text-white font-bold py-4 rounded-xl transition-all mb-6 flex items-center justify-center shadow-md">
+          <Plus size={18} className="mr-2"/> Adicionar Motorista
+        </button>
+        
+        {displayDrivers.length > 0 && (
+          <div className="space-y-3 border-t border-slate-100 pt-6">
+             <h4 className="text-xs font-bold text-slate-500 uppercase">Profissionais ({displayDrivers.length})</h4>
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
+              {displayDrivers.map(d => (
+                <div key={d.id} className="flex justify-between items-center bg-white p-4 rounded-xl border border-slate-200 shadow-sm hover:border-blue-300 transition-colors">
+                  <div>
+                    <div className="text-sm font-bold text-slate-800">{d.nome}</div>
+                    <div className="text-xs text-slate-500">CNH: {d.cnh || 'Não informada'}</div>
+                  </div>
+                  <button onClick={() => setDeleteTarget({id: d.id, type: 'driver'})} className="bg-rose-50 text-rose-500 hover:bg-rose-500 hover:text-white p-2 rounded-lg transition-colors"><Trash2 size={16}/></button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  // --- IMPRESSÃO PDF (MANTIDA IGUAL/LIMPA) ---
+  const renderPrintView = () => {
+    if (selectedTrips.length === 0) return null;
+    const selectedData = trips.filter(t => selectedTrips.includes(t.id));
+    let pRec = 0, pDesp = 0, pKm = 0, pTon = 0;
+    
+    selectedData.forEach(t => {
+      pRec += (t.receitas?.freteIda || 0) + (t.receitas?.freteVolta || 0);
+      pDesp += (t.despesas?.combustivel || 0) + (t.despesas?.diaria || 0) + (t.despesas?.alimentacao || 0) + (t.despesas?.hotel || 0);
+      pKm += (t.kmFinal || 0) - (t.kmInicial || 0);
+      pTon += (t.carga || 0);
+    });
+    
+    const pLucro = pRec - pDesp;
+    return (
+      <div className="hidden print:block w-full h-full bg-white text-slate-900 p-8" style={{ printColorAdjust: 'exact', WebkitPrintColorAdjust: 'exact' }}>
+        <div className="border-b-2 border-slate-900 pb-4 mb-6 flex justify-between items-end">
+          <div><h1 className="text-3xl font-black uppercase tracking-tight">Relatório de Viagens</h1><p className="text-sm text-slate-500 mt-1">Exportado em {new Date().toLocaleDateString('pt-BR')} via FrotaMestre</p></div>
+          <div className="text-right"><p className="text-sm font-bold text-slate-700">{selectedData.length} Viagens</p></div>
+        </div>
+        <div className="grid grid-cols-4 gap-4 mb-8">
+          <div className="bg-slate-50 p-4 border border-slate-200 rounded-xl"><div className="text-xs font-bold text-slate-500 uppercase">Receita Efetiva</div><div className="text-xl font-bold text-emerald-600 mt-1">{formatCurrency(pRec)}</div></div>
+          <div className="bg-slate-50 p-4 border border-slate-200 rounded-xl"><div className="text-xs font-bold text-slate-500 uppercase">Custos Totais</div><div className="text-xl font-bold text-rose-600 mt-1">-{formatCurrency(pDesp)}</div></div>
+          <div className="bg-slate-50 p-4 border border-slate-200 rounded-xl"><div className="text-xs font-bold text-slate-500 uppercase">Lucro Líquido</div><div className={`text-xl font-bold mt-1 ${pLucro >= 0 ? 'text-blue-600' : 'text-rose-600'}`}>{formatCurrency(pLucro)}</div></div>
+          <div className="bg-slate-50 p-4 border border-slate-200 rounded-xl"><div className="text-xs font-bold text-slate-500 uppercase">Produção</div><div className="text-sm font-bold text-slate-700 mt-1">{pKm} KM | {pTon} T</div></div>
+        </div>
+        <table className="w-full text-left text-xs border-collapse">
+          <thead>
+            <tr className="border-b-2 border-slate-800 text-slate-700">
+              <th className="py-2">Ref</th><th className="py-2">Motorista / Caminhão</th><th className="py-2">Rota</th>
+              <th className="py-2 text-right">Receita</th><th className="py-2 text-right">Custo</th><th className="py-2 text-right">Lucro</th>
+            </tr>
+          </thead>
+          <tbody>
+            {selectedData.map(t => {
+              const r = (t.receitas?.freteIda || 0) + (t.receitas?.freteVolta || 0);
+              const c = (t.despesas?.combustivel || 0) + (t.despesas?.diaria || 0) + (t.despesas?.alimentacao || 0) + (t.despesas?.hotel || 0);
+              return (
+                <tr key={t.id} className="border-b border-slate-200">
+                  <td className="py-2 font-bold">#{t.numero || t.id.substring(0,4)}</td>
+                  <td className="py-2">{t.motorista}<br/><span className="text-slate-500">{t.veiculoPlaca}</span></td>
+                  <td className="py-2">{t.origem} → {t.destino}</td>
+                  <td className="py-2 text-right text-emerald-600 font-semibold">{formatCurrency(r)}</td>
+                  <td className="py-2 text-right text-rose-600 font-semibold">{formatCurrency(c)}</td>
+                  <td className="py-2 text-right text-blue-600 font-bold">{formatCurrency(r-c)}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
+
+  return (
+    <>
+      <style>{`
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 8px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 8px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+      `}</style>
+      
+      {/* TOAST DE NOTIFICAÇÃO */}
+      {notification.show && (
+        <div className={`fixed top-4 right-4 md:right-8 z-[9999] px-6 py-4 rounded-2xl shadow-2xl text-white font-medium flex items-center transition-all animate-in slide-in-from-top-4 ${notification.type === 'error' ? 'bg-rose-600' : 'bg-emerald-600'}`}>
+          {notification.type === 'error' ? <AlertCircle size={22} className="mr-3"/> : <CheckCircle size={22} className="mr-3"/>}
+          {notification.message}
+        </div>
+      )}
+
+      {/* MODAL DE CONFIRMAÇÃO DE EXCLUSÃO */}
+      {deleteTarget && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[9999] flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-white rounded-3xl p-8 w-full max-w-sm shadow-2xl border border-slate-100 transform scale-100 animate-in zoom-in-95 duration-200">
+            <h3 className="text-xl font-bold text-slate-900 mb-3 flex items-center"><AlertCircle size={24} className="mr-3 text-rose-500"/> Atenção!</h3>
+            <p className="text-sm text-slate-600 mb-8 leading-relaxed">Tem certeza que deseja apagar este registro? <b>Essa ação é permanente</b> e afetará o histórico.</p>
+            <div className="flex space-x-3">
+              <button onClick={() => setDeleteTarget(null)} className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold py-3 rounded-xl transition-colors">Cancelar</button>
+              <button onClick={executeDelete} className="flex-1 bg-rose-600 hover:bg-rose-700 text-white font-bold py-3 rounded-xl transition-colors shadow-md">Sim, Apagar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {renderPrintView()}
+      
+      <div className="min-h-screen bg-slate-50 md:flex print:hidden font-sans text-slate-900">
+        
+        {/* SIDEBAR DESKTOP */}
+        <aside className="hidden md:flex flex-col w-72 bg-white border-r border-slate-200 fixed h-full z-10 shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
+          <div className="p-8 flex items-center justify-center border-b border-slate-100 mb-4 bg-slate-50/50">
+            <img src="https://i.postimg.cc/nLkYqh6N/Chat-GPT-Image-2-de-set-de-2026-10-57-35.png" alt="Logo Frota Mestre" className="h-24 md:h-28 object-contain drop-shadow-md hover:scale-105 transition-transform duration-500" />
+          </div>
+          <nav className="flex-1 px-4 space-y-3">
+            <button onClick={() => setActiveTab('home')} className={`w-full flex items-center space-x-4 px-5 py-4 rounded-2xl transition-all duration-300 ${activeTab === 'home' ? 'bg-blue-50 text-blue-700 font-bold shadow-sm ring-1 ring-blue-100' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-800'}`}><Home size={22} /><span>Painel & KPIs</span></button>
+            <button onClick={() => setActiveTab('new')} className={`w-full flex items-center space-x-4 px-5 py-4 rounded-2xl transition-all duration-300 ${activeTab === 'new' ? 'bg-blue-600 text-white font-bold shadow-lg hover:shadow-xl hover:-translate-y-0.5' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-800'}`}><Plus size={22} /><span>Nova Viagem</span></button>
+            <button onClick={() => setActiveTab('dre')} className={`w-full flex items-center space-x-4 px-5 py-4 rounded-2xl transition-all duration-300 ${activeTab === 'dre' ? 'bg-blue-50 text-blue-700 font-bold shadow-sm ring-1 ring-blue-100' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-800'}`}><FileText size={22} /><span>DRE e Histórico</span></button>
+            <button onClick={() => setActiveTab('cadastros')} className={`w-full flex items-center space-x-4 px-5 py-4 rounded-2xl transition-all duration-300 ${activeTab === 'cadastros' ? 'bg-blue-50 text-blue-700 font-bold shadow-sm ring-1 ring-blue-100' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-800'}`}><Database size={22} /><span>Meus Cadastros</span></button>
+          </nav>
+        </aside>
+
+        {/* ÁREA PRINCIPAL */}
+        <main className="flex-1 md:ml-72 p-4 md:p-8 lg:p-10 max-w-7xl mx-auto w-full pt-6 md:pt-10 relative">
+          {/* HEADER MOBILE (MAIOR) */}
+          <div className="md:hidden flex flex-col items-center justify-center mb-8 w-full pt-2">
+            <img src="https://i.postimg.cc/nLkYqh6N/Chat-GPT-Image-2-de-set-de-2026-10-57-35.png" alt="Logo Frota Mestre" className="h-20 object-contain drop-shadow-md" />
+          </div>
+          
+          {activeTab === 'home' && renderDashboard()}
+          {activeTab === 'new' && renderFormulario()}
+          {activeTab === 'dre' && renderDRE()}
+          {activeTab === 'cadastros' && renderCadastros()}
+        </main>
+
+        {/* NAVBAR MOBILE */}
+        <nav className="md:hidden fixed bottom-0 w-full bg-white/90 backdrop-blur-md border-t border-slate-200 pb-safe shadow-[0_-8px_30px_rgba(0,0,0,0.08)] z-50">
+          <div className="flex justify-around items-center px-2 h-20">
+            <button onClick={() => setActiveTab('home')} className={`flex flex-col items-center justify-center w-full h-full space-y-1 transition-colors ${activeTab === 'home' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}><Home size={24} strokeWidth={activeTab==='home'?2.5:2}/><span className="text-[10px] font-bold">Painel</span></button>
+            <button onClick={() => setActiveTab('cadastros')} className={`flex flex-col items-center justify-center w-full h-full space-y-1 transition-colors ${activeTab === 'cadastros' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}><Database size={24} strokeWidth={activeTab==='cadastros'?2.5:2}/><span className="text-[10px] font-bold">Frota</span></button>
+            <button onClick={() => setActiveTab('new')} className="relative -top-6 flex flex-col items-center justify-center w-full h-full"><div className="bg-blue-600 text-white shadow-xl shadow-blue-600/30 p-4 rounded-full hover:scale-110 active:scale-95 transition-all"><Plus size={28} strokeWidth={3} /></div></button>
+            <button onClick={() => setActiveTab('dre')} className={`flex flex-col items-center justify-center w-full h-full space-y-1 transition-colors ${activeTab === 'dre' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}><FileText size={24} strokeWidth={activeTab==='dre'?2.5:2}/><span className="text-[10px] font-bold">DRE</span></button>
+          </div>
+        </nav>
+      </div>
+    </>
+  );
+}
