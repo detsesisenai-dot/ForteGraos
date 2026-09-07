@@ -5,32 +5,36 @@ import {
   Bed, Wallet, Database, Receipt, Trash2, RefreshCw, Target, 
   AlertCircle, Printer, Hash, CheckSquare, Square, Scale, 
   Droplet, Clock, Percent, PieChart, Activity, Save, Info, Lightbulb,
-  CreditCard, Calendar, ShoppingCart, Edit, Paperclip, BarChart3, ActivitySquare
+  CreditCard, Calendar, ShoppingCart, Edit, Paperclip, BarChart3, ActivitySquare, LayoutDashboard
 } from 'lucide-react';
 
-// --- FIREBASE IMPORTS ---
+// ============================================================================
+// CONFIGURAÇÃO DE NUVEM
+// ============================================================================
+const EXTERNAL_FIREBASE_CONFIG = {};
+
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, updateDoc } from 'firebase/firestore';
 
-// --- DB INIT ---
 let app, auth, db, hasFirebase = false;
 try {
-  if (typeof __firebase_config !== 'undefined' && __firebase_config) {
-    const firebaseConfig = JSON.parse(__firebase_config);
-    if (Object.keys(firebaseConfig).length > 0) {
-      app = initializeApp(firebaseConfig);
-      auth = getAuth(app);
-      db = getFirestore(app);
-      hasFirebase = true;
-    }
-  }
-} catch (error) { console.error(error); }
+  let configToUse = null;
+  if (typeof __firebase_config !== 'undefined' && __firebase_config) configToUse = JSON.parse(__firebase_config);
+  else if (Object.keys(EXTERNAL_FIREBASE_CONFIG).length > 0 && EXTERNAL_FIREBASE_CONFIG.apiKey) configToUse = EXTERNAL_FIREBASE_CONFIG;
 
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+  if (configToUse && Object.keys(configToUse).length > 0) {
+    app = initializeApp(configToUse);
+    auth = getAuth(app);
+    db = getFirestore(app);
+    hasFirebase = true;
+  }
+} catch (error) { console.warn("Nuvem indisponível."); }
+
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'frota-mestre-app';
 
 // ==========================================
-// MOCK DATA (DADOS SIMULADOS RICOS)
+// MOCK DATA (DADOS DE DEMONSTRAÇÃO)
 // ==========================================
 const MOCK_VEHICLES = [
   { id: 'v1', placa: 'RTA-9J82', modelo: 'Scania R540', capacidade: 38, tipo: 'Próprio' },
@@ -44,15 +48,13 @@ const MOCK_DRIVERS = [
   { id: 'd3', nome: 'Beto Amaral', cnh: '456123789' }
 ];
 
-// Simulamos 3 cenários diferentes de viagens
 const hjDate = new Date();
 const dOntem = new Date(hjDate); dOntem.setDate(hjDate.getDate() - 1);
 const dTresDias = new Date(hjDate); dTresDias.setDate(hjDate.getDate() - 3);
 
 const MOCK_TRIPS = [
   { 
-    id: 't1', numero: '8204',
-    veiculoId: 'v1', veiculoPlaca: 'RTA-9J82', tipoFrota: 'Próprio', motorista: 'Carlos Silva', 
+    id: 't1', numero: '8204', veiculoId: 'v1', veiculoPlaca: 'RTA-9J82', tipoFrota: 'Próprio', motorista: 'Carlos Silva', 
     origem: 'Rio Verde, GO', destino: 'Santos, SP', idaEVolta: true,
     dataSaida: dTresDias.toISOString().split('T')[0], dataRetorno: hjDate.toISOString().split('T')[0],
     kmInicial: 120000, kmFinal: 122300, 
@@ -62,8 +64,7 @@ const MOCK_TRIPS = [
     abastecimentos: [], timestamp: Date.now() - 100000
   },
   { 
-    id: 't2', numero: '8205',
-    veiculoId: 'v2', veiculoPlaca: 'QWW-2A11', tipoFrota: 'Locado', motorista: 'Ana Souza', 
+    id: 't2', numero: '8205', veiculoId: 'v2', veiculoPlaca: 'QWW-2A11', tipoFrota: 'Locado', motorista: 'Ana Souza', 
     origem: 'Sorriso, MT', destino: 'Rondonópolis, MT', idaEVolta: false,
     dataSaida: dOntem.toISOString().split('T')[0], dataRetorno: hjDate.toISOString().split('T')[0],
     kmInicial: 55000, kmFinal: 55520, 
@@ -71,24 +72,12 @@ const MOCK_TRIPS = [
     receitas: { freteIdaPrev: 6500, freteIda: 6200, freteVoltaPrev: 0, freteVolta: 0 },
     despesas: { combustivelPrev: 1200, combustivel: 1100, qtdDiarias: 1, valorDiaria: 100, diaria: 100, alimentacao: 120, hotel: 0 },
     abastecimentos: [], timestamp: Date.now() - 50000
-  },
-  { 
-    id: 't3', numero: '8206',
-    veiculoId: 'v3', veiculoPlaca: 'PBX-1234', tipoFrota: 'Próprio', motorista: 'Beto Amaral', 
-    origem: 'Jataí, GO', destino: 'Paranaguá, PR', idaEVolta: true,
-    dataSaida: hjDate.toISOString().split('T')[0], dataRetorno: '', // Em andamento
-    kmInicial: 210000, kmFinal: 211100, 
-    cargaSaida: 38, cargaChegada: 0, horasEspera: 0, litros: 450,
-    receitas: { freteIdaPrev: 14500, freteIda: 0, freteVoltaPrev: 5000, freteVolta: 0 },
-    despesas: { combustivelPrev: 6000, combustivel: 2250, qtdDiarias: 0, valorDiaria: 150, diaria: 0, alimentacao: 100, hotel: 0 },
-    abastecimentos: [], timestamp: Date.now()
   }
 ];
 
 const MOCK_EXPENSES = [
-  { id: 'e1', descricao: '4 Pneus Michelin', categoria: 'Pneus', valorPrevisto: 12000, valor: 12000, data: dTresDias.toISOString().split('T')[0], status: 'Pago', timestamp: Date.now() - 200000 },
-  { id: 'e2', descricao: 'Troca de Óleo e Filtros', categoria: 'Oficina/Manutenção', valorPrevisto: 2500, valor: 2800, data: dOntem.toISOString().split('T')[0], status: 'Pago', timestamp: Date.now() - 100000 },
-  { id: 'e3', descricao: 'Seguro Frota Mensal', categoria: 'Administrativo', valorPrevisto: 4500, valor: 4500, data: hjDate.toISOString().split('T')[0], status: 'Pendente', timestamp: Date.now() }
+  { id: 'e1', descricao: '4 Pneus Michelin', categoria: 'Pneus e Borracharia', valorPrevisto: 12000, valor: 12000, data: dTresDias.toISOString().split('T')[0], status: 'Pago', linkAnexo: '', timestamp: Date.now() - 200000 },
+  { id: 'e2', descricao: 'Troca de Óleo e Filtros', categoria: 'Manutenção e Peças', valorPrevisto: 2500, valor: 2800, data: dOntem.toISOString().split('T')[0], status: 'Pago', linkAnexo: 'https://dropbox.com/nota_123', timestamp: Date.now() - 100000 }
 ];
 
 export default function App() {
@@ -97,38 +86,32 @@ export default function App() {
   const [notification, setNotification] = useState({ show: false, message: '', type: 'info' });
   const [deleteTarget, setDeleteTarget] = useState(null); 
   const [editId, setEditId] = useState({ type: null, id: null });
-  const fileInputRef = useRef(null);
+  const [tutorialModo, setTutorialModo] = useState(false);
   
   const showNotification = (msg, type = 'info') => {
     setNotification({ show: true, message: msg, type });
     setTimeout(() => setNotification({ show: false, message: '', type: 'info' }), 3500);
   };
 
-  // Se não houver Firebase/Nuvem, usa os Mocks. Se houver, começa vazio (mas popularemos com os mocks se estiver zerado).
   const [trips, setTrips] = useState(hasFirebase ? [] : MOCK_TRIPS);
   const [vehicles, setVehicles] = useState(hasFirebase ? [] : MOCK_VEHICLES);
   const [drivers, setDrivers] = useState(hasFirebase ? [] : MOCK_DRIVERS);
   const [expenses, setExpenses] = useState(hasFirebase ? [] : MOCK_EXPENSES); 
-  
   const [loading, setLoading] = useState(true);
   const [isOffline, setIsOffline] = useState(!hasFirebase);
 
+  // --- STATES FORMULÁRIOS ---
   const [novoCaminhao, setNovoCaminhao] = useState({ placa: '', modelo: '', capacidade: '', tipo: 'Próprio' });
   const [novoMotorista, setNovoMotorista] = useState({ nome: '', cnh: '' });
-  const [novaDespesa, setNovaDespesa] = useState({ descricao: '', categoria: 'Pneus e Borracharia', valor: '', valorPrevisto: '', data: new Date().toISOString().split('T')[0], status: 'Pendente', veiculoId: '', anexo: null });
+  const [novaDespesa, setNovaDespesa] = useState({ descricao: '', categoria: 'Pneus e Borracharia', valor: '', valorPrevisto: '', data: new Date().toISOString().split('T')[0], status: 'Pendente', veiculoId: '', linkAnexo: '' });
 
-  // Formulário completo de viagem (consolidado)
   const [form, setForm] = useState({
-    veiculoId: '', motorista: '', 
-    dataSaida: new Date().toISOString().split('T')[0], dataRetorno: '', 
-    origem: '', destino: '', idaEVolta: false, 
-    kmInicial: '', kmFinal: '', 
-    cargaSaida: '', cargaChegada: '', 
-    horasEspera: '',
+    veiculoId: '', motorista: '', dataSaida: new Date().toISOString().split('T')[0], dataRetorno: '', 
+    origem: '', destino: '', idaEVolta: false, kmInicial: '', kmFinal: '', 
+    cargaSaida: '', cargaChegada: '', horasEspera: '',
     freteIdaPrev: '', freteVoltaPrev: '', freteIda: '', freteVolta: '', 
     combustivel: '', combustivelPrev: '', litros: '', 
-    qtdDiarias: '', valorDiaria: '', alimentacao: '', hotel: '', 
-    abastecimentos: []
+    qtdDiarias: '', valorDiaria: '', alimentacao: '', hotel: '', abastecimentos: [], linkAnexo: ''
   });
 
   const [distanciaEst, setDistanciaEst] = useState(0);
@@ -159,18 +142,15 @@ export default function App() {
     try {
       const unsubTrips = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'trips'), (snap) => {
         const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
-        setTrips(data.length > 0 ? data : MOCK_TRIPS); // Popula com mocks na nuvem vazia (Para Demo)
-        setLoading(false);
+        setTrips(data.length > 0 ? data : MOCK_TRIPS); setLoading(false);
       }, () => { setLoading(false); setIsOffline(true); });
       
       const unsubVeh = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'vehicles'), (snap) => {
-          const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-          setVehicles(data.length > 0 ? data : MOCK_VEHICLES);
+          const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })); setVehicles(data.length > 0 ? data : MOCK_VEHICLES);
       });
       
       const unsubDrv = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'drivers'), (snap) => {
-          const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-          setDrivers(data.length > 0 ? data : MOCK_DRIVERS);
+          const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })); setDrivers(data.length > 0 ? data : MOCK_DRIVERS);
       });
       
       const unsubExp = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'expenses'), (snap) => {
@@ -211,17 +191,12 @@ export default function App() {
     });
     
     let tDespExt = 0; let tDespExtP = 0;
-    expenses.forEach(e => {
-        tDespExt += (e.valor || 0);
-        tDespExtP += (e.valorPrevisto || e.valor || 0);
-    });
+    expenses.forEach(e => { tDespExt += (e.valor || 0); tDespExtP += (e.valorPrevisto || e.valor || 0); });
 
     const luc = tRec - (tDesp + tDespExt); const q = tCar - tCarD;
-    
     const totalDespReal = tDesp + tDespExt;
     const mediaDespDiaria = tKm > 0 ? (totalDespReal / 30) : 0; 
-    const saldoAtual = luc;
-    const sustentabilidadeDias = mediaDespDiaria > 0 && saldoAtual > 0 ? (saldoAtual / mediaDespDiaria) : 0;
+    const sustentabilidadeDias = mediaDespDiaria > 0 && luc > 0 ? (luc / mediaDespDiaria) : 0;
 
     return {
       tRecP, tRec, tDesp, tDespP, tDespExt, tDespExtP, luc, tKm, tCar, q,
@@ -233,14 +208,16 @@ export default function App() {
     };
   }, [trips, expenses]);
 
+  // --- HANDLERS (CRUD) ---
   const handleAddCaminhao = async () => {
     if (!novoCaminhao.placa || !novoCaminhao.modelo) return showNotification("Preencha placa e modelo.", "error");
     const d = { ...novoCaminhao, capacidade: parseFloat(novoCaminhao.capacidade) || 0, timestamp: Date.now() };
     try {
-      if(user) {
-        if(editId.type === 'vehicle') { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'vehicles', editId.id), d); showNotification("Atualizado!", "success"); }
-        else { await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'vehicles'), d); showNotification("Cadastrado!", "success"); }
-      } else { setVehicles(p => [{...d, id: 'l_'+Date.now()}, ...p]); showNotification("Salvo offline.", "success"); }
+      if(user && hasFirebase) {
+        if(editId.type === 'vehicle') await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'vehicles', editId.id), d);
+        else await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'vehicles'), d);
+      } else setVehicles(p => editId.type === 'vehicle' ? p.map(x=>x.id===editId.id?{...x,...d}:x) : [{...d, id: 'l_'+Date.now()}, ...p]);
+      showNotification(editId.type ? "Atualizado!" : "Cadastrado!", "success");
     } catch(e) { showNotification("Erro.", "error"); } finally { setNovoCaminhao({ placa: '', modelo: '', capacidade: '', tipo: 'Próprio' }); setEditId({type:null, id:null}); }
   };
 
@@ -248,31 +225,12 @@ export default function App() {
     if (!novoMotorista.nome) return showNotification("Preencha o nome.", "error");
     const d = { ...novoMotorista, timestamp: Date.now() };
     try {
-      if(user) {
-        if(editId.type === 'driver') { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'drivers', editId.id), d); showNotification("Atualizado!", "success"); }
-        else { await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'drivers'), d); showNotification("Cadastrado!", "success"); }
-      } else { setDrivers(p => [{...d, id: 'l_'+Date.now()}, ...p]); showNotification("Offline.", "success"); }
+      if(user && hasFirebase) {
+        if(editId.type === 'driver') await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'drivers', editId.id), d);
+        else await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'drivers'), d);
+      } else setDrivers(p => editId.type === 'driver' ? p.map(x=>x.id===editId.id?{...x,...d}:x) : [{...d, id: 'l_'+Date.now()}, ...p]);
+      showNotification("Sucesso!", "success");
     } catch(e) { showNotification("Erro.", "error"); } finally { setNovoMotorista({ nome: '', cnh: '' }); setEditId({type:null, id:null}); }
-  };
-
-  const handleAddDespesa = async () => {
-    if (!novaDespesa.descricao || !novaDespesa.valor) return showNotification("Preencha descrição e valor.", "error");
-    const d = { ...novaDespesa, valor: parseBRNumber(novaDespesa.valor), valorPrevisto: parseBRNumber(novaDespesa.valorPrevisto), timestamp: Date.now() };
-    try {
-      if(user) {
-        if(editId.type === 'expense') { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'expenses', editId.id), d); showNotification("Atualizado!", "success"); }
-        else { await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'expenses'), d); showNotification("Lançado!", "success"); }
-      } else { setExpenses(p => [{...d, id: 'l_'+Date.now()}, ...p]); showNotification("Offline.", "success"); }
-    } catch(e) { showNotification("Erro.", "error"); } finally { setNovaDespesa({ descricao: '', categoria: 'Pneus e Borracharia', valor: '', valorPrevisto: '', data: new Date().toISOString().split('T')[0], status: 'Pendente', veiculoId: '', anexo: null }); setEditId({type:null, id:null}); }
-  };
-
-  const handleFileUpload = (e) => {
-      const file = e.target.files[0];
-      if (file && file.size <= 1048576) {
-          const reader = new FileReader();
-          reader.onloadend = () => { setNovaDespesa(p => ({...p, anexo: { name: file.name, data: reader.result }})); showNotification("Anexo preparado!", "info"); };
-          reader.readAsDataURL(file);
-      } else if(file) showNotification("Max 1MB para simulação.", "error");
   };
 
   const handleSalvarViagem = async () => {
@@ -280,13 +238,13 @@ export default function App() {
         return showNotification("Atenção: Preencha todos os campos obrigatórios básicos (Datas, Veículo, Rota e KMs).", "error");
     }
     
-    if (!user) showNotification("Sincronizando...", "info");
+    if (!user && hasFirebase) showNotification("Sincronizando...", "info");
     const v = vehicles.find(x => String(x.id) === String(form.veiculoId)) || { id: 'ext', placa: 'Avulso', tipo: 'Terceirizado', capacidade: 38 };
     
     const docData = {
       veiculoId: v.id, veiculoPlaca: v.placa, tipoFrota: v.tipo, motorista: form.motorista, 
       dataSaida: form.dataSaida, dataRetorno: form.dataRetorno,
-      origem: form.origem, destino: form.destino, idaEVolta: form.idaEVolta,
+      origem: form.origem, destino: form.destino, idaEVolta: form.idaEVolta, linkAnexo: form.linkAnexo,
       kmInicial: parseBRNumber(form.kmInicial), kmFinal: parseBRNumber(form.kmFinal), 
       cargaSaida: parseBRNumber(form.cargaSaida), cargaChegada: parseBRNumber(form.cargaChegada),
       horasEspera: parseBRNumber(form.horasEspera), litros: parseBRNumber(form.litros),
@@ -297,7 +255,7 @@ export default function App() {
 
     try {
       if (editId.type === 'trip') { 
-        if(user) await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'trips', editId.id), docData);
+        if(user && hasFirebase) await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'trips', editId.id), docData);
         else setTrips(p => p.map(x => x.id === editId.id ? {...x, ...docData} : x));
         showNotification("Viagem atualizada!", "success"); 
       }
@@ -305,7 +263,7 @@ export default function App() {
         docData.numero = Math.floor(1000 + Math.random() * 9000).toString(); 
         docData.dataRegistro = new Date().toLocaleDateString('pt-BR'); 
         docData.timestamp = Date.now(); 
-        if(user) await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'trips'), docData);
+        if(user && hasFirebase) await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'trips'), docData);
         else setTrips(p => [{...docData, id: 'loc_'+Date.now()}, ...p]);
         showNotification("Viagem salva e processada!", "success"); 
       }
@@ -313,36 +271,23 @@ export default function App() {
     } catch (e) { showNotification("Erro ao salvar.", "error"); }
   };
 
-  const resetForm = () => {
-    setForm({ veiculoId: '', motorista: '', dataSaida: new Date().toISOString().split('T')[0], dataRetorno: '', origem: '', destino: '', idaEVolta: false, kmInicial: '', kmFinal: '', cargaSaida: '', cargaChegada: '', horasEspera: '', freteIdaPrev: '', freteVoltaPrev: '', freteIda: '', freteVolta: '', combustivel: '', combustivelPrev: '', litros: '', qtdDiarias: '', valorDiaria: '', alimentacao: '', hotel: '', abastecimentos: [] });
-    setEditId({ type: null, id: null });
-  };
-
-  const loadTrip = (t) => {
-    setForm({
-      veiculoId: t.veiculoId, motorista: t.motorista, dataSaida: t.dataSaida || '', dataRetorno: t.dataRetorno || '', origem: t.origem, destino: t.destino, idaEVolta: t.idaEVolta,
-      kmInicial: String(t.kmInicial||''), kmFinal: String(t.kmFinal||''), cargaSaida: String(t.cargaSaida||''), cargaChegada: String(t.cargaChegada||''), horasEspera: String(t.horasEspera||''),
-      freteIdaPrev: String(t.receitas?.freteIdaPrev||''), freteVoltaPrev: String(t.receitas?.freteVoltaPrev||''), freteIda: String(t.receitas?.freteIda||''), freteVolta: String(t.receitas?.freteVolta||''),
-      combustivelPrev: String(t.despesas?.combustivelPrev||''), combustivel: String(t.despesas?.combustivel||''), litros: String(t.litros||''), qtdDiarias: String(t.despesas?.qtdDiarias||''), valorDiaria: String(t.despesas?.valorDiaria||''), alimentacao: String(t.despesas?.alimentacao||''), hotel: String(t.despesas?.hotel||''), abastecimentos: t.abastecimentos||[]
-    });
-    setEditId({ type: 'trip', id: t.id }); setActiveTab('new'); window.scrollTo(0,0); showNotification("Modo de Edição Ativado.", "info");
-  };
-
-  const loadExpense = (e) => {
-    setNovaDespesa({ descricao: e.descricao, categoria: e.categoria, valor: String(e.valor||''), valorPrevisto: String(e.valorPrevisto||''), data: e.data, status: e.status, veiculoId: e.veiculoId||'', anexo: e.anexo || null });
-    setEditId({ type: 'expense', id: e.id }); window.scrollTo(0,0); showNotification("Modo de Edição Ativado.", "info");
-  };
-
-  const loadVehicle = (v) => {
-    setNovoCaminhao({ placa: v.placa, modelo: v.modelo, capacidade: String(v.capacidade||''), tipo: v.tipo });
-    setEditId({ type: 'vehicle', id: v.id }); window.scrollTo(0,0); showNotification("Editando Veículo.", "info");
+  const handleAddDespesa = async () => {
+    if (!novaDespesa.descricao || !novaDespesa.valor) return showNotification("Preencha descrição e valor.", "error");
+    const d = { ...novaDespesa, valor: parseBRNumber(novaDespesa.valor), valorPrevisto: parseBRNumber(novaDespesa.valorPrevisto), timestamp: Date.now() };
+    try {
+      if(user && hasFirebase) {
+        if(editId.type === 'expense') await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'expenses', editId.id), d);
+        else await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'expenses'), d);
+      } else setExpenses(p => editId.type === 'expense' ? p.map(x=>x.id===editId.id?{...x,...d}:x) : [{...d, id: 'l_'+Date.now()}, ...p]);
+      showNotification("Despesa salva!", "success");
+    } catch(e) { showNotification("Erro ao salvar despesa.", "error"); } finally { setNovaDespesa({ descricao: '', categoria: 'Pneus e Borracharia', valor: '', valorPrevisto: '', data: new Date().toISOString().split('T')[0], status: 'Pendente', veiculoId: '', linkAnexo: '' }); setEditId({type:null, id:null}); }
   };
 
   const executeDelete = async () => {
     if(!deleteTarget) return;
     try {
       const col = deleteTarget.type === 'trip' ? 'trips' : deleteTarget.type === 'vehicle' ? 'vehicles' : deleteTarget.type === 'expense' ? 'expenses' : 'drivers';
-      if(user && !deleteTarget.id.startsWith('loc_') && !deleteTarget.id.startsWith('t') && !deleteTarget.id.startsWith('v') && !deleteTarget.id.startsWith('d') && !deleteTarget.id.startsWith('e')) {
+      if(user && hasFirebase && !deleteTarget.id.startsWith('loc_') && !deleteTarget.id.startsWith('t') && !deleteTarget.id.startsWith('v') && !deleteTarget.id.startsWith('d') && !deleteTarget.id.startsWith('e')) {
          await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', col, deleteTarget.id));
       } else {
         if(deleteTarget.type === 'trip') setTrips(p => p.filter(x => x.id !== deleteTarget.id));
@@ -354,42 +299,68 @@ export default function App() {
     } catch(e) { showNotification("Erro.", "error"); } finally { setDeleteTarget(null); }
   };
 
+  // --- FUNÇÕES DE CARREGAMENTO PARA EDIÇÃO ---
+  const loadTrip = (t) => {
+    setForm({
+      veiculoId: t.veiculoId, motorista: t.motorista, dataSaida: t.dataSaida || '', dataRetorno: t.dataRetorno || '', origem: t.origem, destino: t.destino, idaEVolta: t.idaEVolta,
+      kmInicial: String(t.kmInicial||''), kmFinal: String(t.kmFinal||''), cargaSaida: String(t.cargaSaida||''), cargaChegada: String(t.cargaChegada||''), horasEspera: String(t.horasEspera||''), linkAnexo: t.linkAnexo||'',
+      freteIdaPrev: String(t.receitas?.freteIdaPrev||''), freteVoltaPrev: String(t.receitas?.freteVoltaPrev||''), freteIda: String(t.receitas?.freteIda||''), freteVolta: String(t.receitas?.freteVolta||''),
+      combustivelPrev: String(t.despesas?.combustivelPrev||''), combustivel: String(t.despesas?.combustivel||''), litros: String(t.litros||''), qtdDiarias: String(t.despesas?.qtdDiarias||''), valorDiaria: String(t.despesas?.valorDiaria||''), alimentacao: String(t.despesas?.alimentacao||''), hotel: String(t.despesas?.hotel||''), abastecimentos: t.abastecimentos||[]
+    });
+    setEditId({ type: 'trip', id: t.id }); setActiveTab('new'); window.scrollTo(0,0); showNotification("Modo de Edição Ativado.", "info");
+  };
+
+  const loadExpense = (e) => {
+    setNovaDespesa({ descricao: e.descricao, categoria: e.categoria, valor: String(e.valor||''), valorPrevisto: String(e.valorPrevisto||''), data: e.data, status: e.status, veiculoId: e.veiculoId||'', linkAnexo: e.linkAnexo||'' });
+    setEditId({ type: 'expense', id: e.id }); window.scrollTo(0,0); showNotification("Editando despesa.", "info");
+  };
+  
+  const resetForm = () => {
+    setForm({ veiculoId: '', motorista: '', dataSaida: new Date().toISOString().split('T')[0], dataRetorno: '', origem: '', destino: '', idaEVolta: false, kmInicial: '', kmFinal: '', cargaSaida: '', cargaChegada: '', horasEspera: '', freteIdaPrev: '', freteVoltaPrev: '', freteIda: '', freteVolta: '', combustivel: '', combustivelPrev: '', litros: '', qtdDiarias: '', valorDiaria: '', alimentacao: '', hotel: '', abastecimentos: [], linkAnexo: '' });
+    setEditId({ type: null, id: null });
+  };
+
+  // --- TELAS / RENDERIZADORES ---
   const renderDashboard = () => {
-    const atv = trips; // Mostra o Gantt de todas para Demo
+    const atv = trips; 
     const hj = new Date();
     const ds = Array.from({length: 14}, (_, i) => { const d = new Date(); d.setDate(hj.getDate() - 5 + i); return d; });
     
     return (
       <div className="space-y-6 pb-20 md:pb-6 animate-in fade-in">
         
-        {/* Gráfico de Gantt Interativo */}
+        {/* GRÁFICO GANTT - Controle de Caminhões */}
         <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 relative overflow-hidden">
           <h2 className="text-sm font-bold flex items-center mb-6"><Activity size={18} className="mr-2 text-blue-500"/> Controle de Operações (Gantt)</h2>
+          
           <div className="min-w-[700px] overflow-x-auto relative custom-scrollbar pb-4">
-            
-            {/* Cabecalho Dias */}
+            {/* Timeline Header */}
             <div className="flex border-b border-slate-200 pl-32 pb-2 relative z-20">
-              {ds.map((d, i) => <div key={i} className={`flex-1 text-center text-[10px] font-bold ${d.toDateString()===hj.toDateString()?'text-rose-600 bg-rose-50 rounded py-0.5':'text-slate-400'}`}>{d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})}</div>)}
+              {ds.map((d, i) => (
+                <div key={i} className={`flex-1 text-center text-[10px] font-bold ${d.toDateString()===hj.toDateString()?'text-rose-600 bg-rose-50 rounded py-0.5':'text-slate-400'}`}>
+                  {d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})}
+                </div>
+              ))}
             </div>
             
-            {/* Linha do Tempo Atual (HOJE) */}
+            {/* Linha de Hoje */}
             <div className="absolute top-6 bottom-0 w-px border-l-2 border-dashed border-rose-400 z-10" style={{ left: `calc(8rem + ((100% - 8rem)/14)*5.5)` }}></div>
-            
-            {/* Trilhas das Viagens */}
+
+            {/* Barras de Viagem */}
             <div className="pt-4 space-y-4 relative z-20">
-              {atv.length === 0 ? <div className="text-xs text-slate-400 text-center py-4">Nenhuma viagem.</div> : atv.map(t => {
+              {atv.length === 0 ? <div className="text-xs text-slate-400 text-center py-4">Nenhuma viagem em andamento no período.</div> : atv.map(t => {
                 const sDate = t.dataSaida ? new Date(t.dataSaida) : new Date();
-                const rDate = t.dataRetorno ? new Date(t.dataRetorno) : new Date(sDate.getTime() + (Math.max(1, ((t.kmFinal||0)-(t.kmInicial||0))/600) * 86400000));
+                const rDate = t.dataRetorno ? new Date(t.dataRetorno) : new Date(sDate.getTime() + (Math.max(1, ((t.kmFinal||0)-(t.kmInicial||0))/600) * 86400000)); // Aproximação de km por dia
                 const durDias = Math.max(1, Math.ceil((rDate - sDate) / (1000 * 60 * 60 * 24)));
                 
-                // Calculo de Offset para o Gráfico (Gambiarra visual baseada nos dias do mock)
-                let off = 5; // Hoje
+                // Offset calculation (simplificado)
+                let off = 5; 
                 if(sDate < hj) off = 5 - Math.ceil((hj - sDate) / (1000 * 60 * 60 * 24));
                 if(sDate > hj) off = 5 + Math.ceil((sDate - hj) / (1000 * 60 * 60 * 24));
-                off = Math.max(0, Math.min(13, off)); // Mantém dentro dos limites do gráfico (14 dias)
+                off = Math.max(0, Math.min(13, off)); 
 
                 return (
-                  <div key={t.id} className="flex items-center text-xs group cursor-pointer" onClick={() => loadTrip(t)} title="Clique para editar a viagem">
+                  <div key={t.id} className="flex items-center text-xs group cursor-pointer" onClick={() => loadTrip(t)} title="Clique para editar">
                     <div className="w-32 truncate pr-4 text-slate-700 font-semibold flex items-center"><Truck size={12} className="mr-1 text-slate-400"/> {t.veiculoPlaca}</div>
                     <div className="flex-1 relative h-8 bg-slate-50 rounded-lg overflow-hidden border border-slate-100">
                       <div className={`absolute top-0 bottom-0 rounded-lg flex items-center px-3 text-[10px] text-white font-bold truncate transition-all hover:brightness-110 shadow-sm ${t.tipoFrota==='Próprio'?'bg-blue-500': t.dataRetorno ? 'bg-emerald-500' : 'bg-amber-500'}`} style={{ left: `${(off/14)*100}%`, width: `${Math.min(100, (durDias/14)*100)}%` }}>
@@ -403,10 +374,23 @@ export default function App() {
           </div>
         </div>
 
-        {/* 10 KPIs */}
+        {/* 10 INDICADORES */}
         <div className="bg-slate-900 text-white rounded-3xl p-6 md:p-8 shadow-xl relative overflow-hidden">
           <div className="absolute right-0 top-0 opacity-5 pointer-events-none"><Target size={300} className="-mr-10 -mt-10" /></div>
-          <h2 className="text-lg font-bold mb-6 flex items-center relative z-10"><Target size={24} className="mr-3 text-blue-400"/> 10 Indicadores de Desempenho</h2>
+          <div className="flex justify-between items-center mb-6 relative z-10">
+            <h2 className="text-lg font-bold flex items-center"><Target size={24} className="mr-3 text-blue-400"/> 10 Indicadores de Desempenho</h2>
+            <button onClick={()=>setTutorialModo(!tutorialModo)} className="bg-blue-600/30 hover:bg-blue-600/50 px-3 py-1.5 rounded-full text-xs font-bold text-blue-200 flex items-center transition-colors">
+              <Lightbulb size={14} className="mr-1"/> Iniciar Tour Guiado
+            </button>
+          </div>
+          
+          {tutorialModo && (
+             <div className="bg-blue-800 text-blue-100 p-4 rounded-xl mb-6 text-sm flex items-start animate-in fade-in">
+                <Info size={20} className="mr-3 shrink-0 text-blue-300"/>
+                <div><strong>Dica do Tour:</strong> Estes 10 indicadores processam todas as viagens da base. Clique em "Lançar Viagem" para alimentar os dados, ou "Fluxo de Caixa" para ver a saúde financeira. O Gantt acima mostra visualmente onde os caminhões estão na semana.</div>
+             </div>
+          )}
+
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4 relative z-10">
             <div className="bg-slate-800/50 p-4 rounded-2xl border border-slate-700/50"><span className="text-[10px] uppercase font-bold text-slate-400 mb-1 flex items-center"><Scale size={12} className="mr-1"/> Volume Movimentado</span><div className="text-xl font-bold">{ind.tCar.toFixed(1)}t</div></div>
             <div className="bg-slate-800/50 p-4 rounded-2xl border border-slate-700/50"><span className="text-[10px] uppercase font-bold text-slate-400 mb-1 flex items-center"><TrendingDown size={12} className="mr-1"/> Perda Balança</span><div className={`text-xl font-bold ${ind.pQ>0.5?'text-rose-400':'text-emerald-400'}`}>{ind.pQ.toFixed(2)}%</div></div>
@@ -423,260 +407,270 @@ export default function App() {
   };
 
   const renderFluxoCaixa = () => {
-      const prevRec = ind.tRecP; const realRec = ind.tRec;
-      const prevDesp = ind.tDespP + ind.tDespExtP; const realDesp = ind.tDesp + ind.tDespExt;
-      const difRec = realRec - prevRec; const difDesp = prevDesp - realDesp;
-      
       let saudeCor = ind.sustentabilidadeDias > 90 ? 'text-emerald-500' : ind.sustentabilidadeDias > 30 ? 'text-amber-500' : 'text-rose-500';
       let saudeBg = ind.sustentabilidadeDias > 90 ? 'bg-emerald-50' : ind.sustentabilidadeDias > 30 ? 'bg-amber-50' : 'bg-rose-50';
 
       return (
-        <div className="space-y-6 pb-24 md:pb-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="space-y-6 pb-24 md:pb-6 animate-in fade-in">
             <div className="flex justify-between items-end">
-              <div><h1 className="text-2xl font-bold text-slate-900">Fluxo de Caixa & DRE</h1><p className="text-sm text-slate-500 mt-1">Análise de sustentabilidade e lançamento de custos extras (Cartão, Pneus).</p></div>
+              <div><h1 className="text-2xl font-bold text-slate-900">Fluxo de Caixa & DRE</h1><p className="text-sm text-slate-500 mt-1">Análise de sustentabilidade e lançamento de custos extras.</p></div>
             </div>
 
-            {/* DRE GERENCIAL E SUSTENTABILIDADE */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className={`md:col-span-1 p-6 rounded-3xl border border-slate-200 ${saudeBg} flex flex-col justify-center items-center text-center shadow-sm relative overflow-hidden group`}>
                     <ActivitySquare size={120} className={`absolute -right-4 -bottom-4 opacity-10 ${saudeCor} transition-transform group-hover:scale-110 duration-700`}/>
-                    <ActivitySquare size={32} className={`mb-2 ${saudeCor} relative z-10`}/>
-                    <h3 className="text-sm font-bold text-slate-700 uppercase tracking-widest mb-1 relative z-10">Runway Operacional</h3>
+                    <h3 className="text-sm font-bold text-slate-700 uppercase tracking-widest mb-1 relative z-10">Sustentabilidade de Caixa</h3>
                     <div className={`text-4xl md:text-5xl font-black ${saudeCor} my-2 relative z-10`}>{ind.sustentabilidadeDias > 0 ? `${ind.sustentabilidadeDias.toFixed(0)} dias` : 'Crítico'}</div>
-                    <p className="text-[10px] text-slate-500 mt-2 max-w-[200px] relative z-10 bg-white/60 p-2 rounded-lg backdrop-blur-sm">Tempo que a empresa banca os custos se a receita parar hoje.</p>
+                    <p className="text-[10px] text-slate-500 mt-2 max-w-[200px] relative z-10 bg-white/60 p-2 rounded-lg backdrop-blur-sm">Tempo que a empresa banca os custos médios com o lucro atual gerado.</p>
                 </div>
 
                 <div className="md:col-span-2 bg-white rounded-3xl shadow-sm border border-slate-100 p-6 md:p-8 flex flex-col justify-around">
                     <div>
                         <div className="flex justify-between items-end mb-2">
                             <span className="text-xs font-bold text-slate-500 uppercase">Faturamento (Orçado vs Real)</span>
-                            <span className={`text-sm font-bold ${difRec >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{difRec >= 0 ? 'Superavit: +' : 'Abaixo: '}{formatCurrency(difRec)}</span>
+                            <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded">R$ {ind.tRec.toLocaleString('pt-BR')}</span>
                         </div>
                         <div className="w-full bg-slate-100 rounded-full h-4 flex overflow-hidden relative">
-                            <div className="absolute inset-0 bg-emerald-500/20" style={{width: `${Math.min(100,(prevRec/Math.max(1,prevRec,realRec))*100)}%`}}></div>
-                            <div className="bg-emerald-500 h-full relative z-10 rounded-full" style={{width: `${Math.min(100,(realRec/Math.max(1,prevRec,realRec))*100)}%`}}></div>
+                            <div className="absolute inset-0 bg-emerald-500/20" style={{width: `${Math.min(100,(ind.tRecP/Math.max(1,ind.tRecP,ind.tRec))*100)}%`}}></div>
+                            <div className="bg-emerald-500 h-full relative z-10 rounded-full" style={{width: `${Math.min(100,(ind.tRec/Math.max(1,ind.tRecP,ind.tRec))*100)}%`}}></div>
                         </div>
-                        <div className="flex justify-between text-[10px] text-slate-400 mt-1 font-medium"><span>Previsto: {formatCurrency(prevRec)}</span><span>Realizado: {formatCurrency(realRec)}</span></div>
+                        <div className="flex justify-between text-[10px] text-slate-400 mt-1 font-medium"><span>Orçado: {formatCurrency(ind.tRecP)}</span><span>Efetivo: {formatCurrency(ind.tRec)}</span></div>
                     </div>
-                    <div className="mt-6 md:mt-8">
+                    
+                    <div className="mt-6">
                         <div className="flex justify-between items-end mb-2">
-                            <span className="text-xs font-bold text-slate-500 uppercase">Custos (Orçamento vs Gasto)</span>
-                            <span className={`text-sm font-bold ${difDesp >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{difDesp >= 0 ? 'Economia: +' : 'Estouro: '}{formatCurrency(difDesp)}</span>
+                            <span className="text-xs font-bold text-slate-500 uppercase">Despesas Totais (Operação + Extras)</span>
+                            <span className="text-[10px] font-bold text-rose-600 bg-rose-50 px-2 py-1 rounded">R$ {(ind.tDesp+ind.tDespExt).toLocaleString('pt-BR')}</span>
                         </div>
                         <div className="w-full bg-slate-100 rounded-full h-4 flex overflow-hidden relative">
-                             <div className="absolute inset-0 bg-rose-500/20" style={{width: `${Math.min(100,(prevDesp/Math.max(1,prevDesp,realDesp))*100)}%`}}></div>
-                            <div className="bg-rose-500 h-full relative z-10 rounded-full" style={{width: `${Math.min(100,(realDesp/Math.max(1,prevDesp,realDesp))*100)}%`}}></div>
+                            <div className="absolute inset-0 bg-rose-500/20" style={{width: `${Math.min(100,((ind.tDespP+ind.tDespExtP)/Math.max(1,ind.tDespP+ind.tDespExtP,ind.tDesp+ind.tDespExt))*100)}%`}}></div>
+                            <div className="bg-rose-500 h-full relative z-10 rounded-full" style={{width: `${Math.min(100,((ind.tDesp+ind.tDespExt)/Math.max(1,ind.tDespP+ind.tDespExtP,ind.tDesp+ind.tDespExt))*100)}%`}}></div>
                         </div>
-                        <div className="flex justify-between text-[10px] text-slate-400 mt-1 font-medium"><span>Orçado: {formatCurrency(prevDesp)}</span><span>Gasto: {formatCurrency(realDesp)}</span></div>
+                        <div className="flex justify-between text-[10px] text-slate-400 mt-1 font-medium"><span>Previsto: {formatCurrency(ind.tDespP+ind.tDespExtP)}</span><span>Efetivo: {formatCurrency(ind.tDesp+ind.tDespExt)}</span></div>
                     </div>
                 </div>
             </div>
 
-            {/* FORMULÁRIO DESPESAS E LISTAGEM */}
+            {/* ABA DE DESPESAS/COMPRAS INTELIGENTE */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="md:col-span-1 bg-white rounded-3xl shadow-sm border border-slate-100 p-6 md:p-8">
-                    <h3 className="text-base font-bold text-slate-800 mb-2 flex items-center"><CreditCard size={20} className="mr-2 text-blue-500"/> Lançamento de Caixa</h3>
-                    
-                    <div className="space-y-4 mt-6">
-                        <div><span className="text-[10px] uppercase font-bold text-slate-400 mb-1 block">Descrição da Despesa</span><input type="text" placeholder="Ex: Fatura Cartão" value={novaDespesa.descricao} onChange={e=>setNovaDespesa({...novaDespesa,descricao:e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-100 text-sm" /></div>
-                        <div className="flex space-x-3">
-                            <div className="flex-1"><span className="text-[10px] uppercase font-bold text-slate-400 mb-1 block">Orçado (R$)</span><input type="number" placeholder="0,00" value={novaDespesa.valorPrevisto} onChange={e=>setNovaDespesa({...novaDespesa,valorPrevisto:e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none text-sm" /></div>
-                            <div className="flex-1"><span className="text-[10px] uppercase font-bold text-rose-500 mb-1 block">Gasto Real</span><input type="number" placeholder="0,00" value={novaDespesa.valor} onChange={e=>setNovaDespesa({...novaDespesa,valor:e.target.value})} className="w-full border border-rose-200 bg-rose-50 rounded-xl px-4 py-3 font-bold text-rose-700 text-sm outline-none" /></div>
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                           <div><span className="text-[10px] uppercase font-bold text-slate-400 mb-1 block">Categoria</span><select value={novaDespesa.categoria} onChange={e=>setNovaDespesa({...novaDespesa,categoria:e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-3 outline-none text-sm"><option value="Pneus">Pneus</option><option value="Oficina/Manutenção">Oficina/Manutenção</option><option value="Cartão de Crédito">Cartão de Crédito</option><option value="Administrativo">Administrativo</option></select></div>
-                           <div><span className="text-[10px] uppercase font-bold text-slate-400 mb-1 block">Status</span><select value={novaDespesa.status} onChange={e=>setNovaDespesa({...novaDespesa,status:e.target.value})} className={`w-full border rounded-xl px-3 py-3 font-bold text-sm outline-none ${novaDespesa.status === 'Pago' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}><option value="Pago">Pago</option><option value="Pendente">A Pagar</option></select></div>
-                        </div>
-                        <div>
-                           <span className="text-[10px] uppercase font-bold text-slate-400 mb-1 block">Anexar NF / Comprovante</span>
-                           <div className="border-2 border-dashed border-slate-200 rounded-xl p-4 text-center bg-slate-50 hover:bg-blue-50 cursor-pointer relative">
-                               <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" accept="image/*,.pdf" />
-                               <Paperclip size={18} className={`mx-auto mb-1 ${novaDespesa.anexo ? 'text-blue-500' : 'text-slate-400'}`}/>
-                               <span className={`text-xs font-bold ${novaDespesa.anexo ? 'text-blue-600' : 'text-slate-500'}`}>{novaDespesa.anexo ? novaDespesa.anexo.name : 'Tocar para anexar'}</span>
-                           </div>
-                        </div>
-
-                        <div className="flex space-x-2 pt-2">
-                          {editId.type && <button onClick={()=>{setEditId({type:null,id:null});setNovaDespesa({ descricao: '', categoria: 'Pneus', valor: '', valorPrevisto: '', data: new Date().toISOString().split('T')[0], status: 'Pendente', veiculoId: '', anexo: null });}} className="flex-1 bg-slate-100 text-slate-700 font-bold py-3.5 rounded-xl hover:bg-slate-200 text-sm">Cancelar</button>}
-                          <button onClick={handleAddDespesa} className="flex-[2] bg-slate-900 text-white font-bold py-3.5 rounded-xl hover:bg-black active:scale-[0.98] shadow-md text-sm">{editId.type ? 'Atualizar' : 'Registrar no Caixa'}</button>
-                        </div>
+                <div className="md:col-span-1 bg-white rounded-3xl shadow-sm border border-slate-100 p-6 relative">
+                  <h3 className="text-sm font-bold text-slate-800 mb-4 flex items-center"><ShoppingCart size={18} className="mr-2 text-rose-500"/> {editId.type === 'expense' ? 'Editar Despesa' : 'Nova Despesa/Compra'}</h3>
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="col-span-2">
+                         <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Categoria</span>
+                         <select value={novaDespesa.categoria} onChange={e => setNovaDespesa({...novaDespesa, categoria: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-100 text-sm">
+                           <option value="Pneus e Borracharia">Pneus</option><option value="Manutenção e Peças">Manutenção</option><option value="Cartão de Crédito">Cartão de Crédito</option><option value="Outros">Outros</option>
+                         </select>
+                      </div>
+                      <div className="col-span-2">
+                         <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Descrição/Serviço</span>
+                         <input type="text" placeholder="Ex: 4 Pneus Michelin" value={novaDespesa.descricao} onChange={e => setNovaDespesa({...novaDespesa, descricao: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none" />
+                      </div>
+                      <div>
+                         <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Valor Orçado</span>
+                         <input type="number" placeholder="R$" value={novaDespesa.valorPrevisto} onChange={e => setNovaDespesa({...novaDespesa, valorPrevisto: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none" />
+                      </div>
+                      <div>
+                         <span className="text-[10px] uppercase font-bold text-rose-600 block mb-1">Valor Gasto (Real)</span>
+                         <input type="number" placeholder="R$" value={novaDespesa.valor} onChange={e => setNovaDespesa({...novaDespesa, valor: e.target.value})} className="w-full bg-rose-50 border border-rose-200 rounded-xl px-4 py-3 text-sm font-bold text-rose-700 outline-none" />
+                      </div>
                     </div>
+                    
+                    {/* Anexo em Nuvem Fake/Simulado para UI */}
+                    <div className="border-2 border-dashed border-slate-200 rounded-xl p-4 text-center hover:bg-slate-50 transition-colors">
+                       <Paperclip size={20} className="mx-auto text-slate-400 mb-2"/>
+                       <span className="text-xs font-bold text-slate-600 block">Anexar Nota ou Boleto</span>
+                       <input type="text" placeholder="Cole o link do Google Drive/Dropbox aqui..." value={novaDespesa.linkAnexo} onChange={e => setNovaDespesa({...novaDespesa, linkAnexo: e.target.value})} className="mt-2 w-full text-[10px] bg-white border border-slate-200 p-2 rounded text-center"/>
+                    </div>
+                    
+                    <div className="flex space-x-2 mt-4">
+                      {editId.type === 'expense' && <button onClick={()=>{setNovaDespesa({ descricao: '', categoria: 'Pneus e Borracharia', valor: '', valorPrevisto: '', data: new Date().toISOString().split('T')[0], status: 'Pendente', veiculoId: '', linkAnexo: '' }); setEditId({type:null,id:null});}} className="flex-1 bg-slate-100 text-slate-600 font-bold py-3 rounded-xl text-sm">Cancelar</button>}
+                      <button onClick={handleAddDespesa} className="flex-[2] bg-slate-900 hover:bg-black text-white font-bold py-3 rounded-xl text-sm shadow-md transition-all flex justify-center items-center">
+                        <Save size={16} className="mr-2"/> {editId.type === 'expense' ? 'Atualizar' : 'Lançar'}
+                      </button>
+                    </div>
+                  </div>
                 </div>
-                
-                <div className="md:col-span-2 bg-white rounded-3xl shadow-sm border border-slate-100 p-6 md:p-8">
-                    <h3 className="text-base font-bold text-slate-800 mb-6">Lançamentos Extras</h3>
-                    {expenses.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center h-48 text-slate-400"><ShoppingCart size={32} className="mb-2 opacity-20"/><p className="text-sm font-medium">Caixa limpo.</p></div>
-                    ) : (
-                        <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
-                        {expenses.map(exp => (
-                            <div key={exp.id} className="flex justify-between items-center p-4 bg-white rounded-2xl border border-slate-200 hover:border-blue-300 hover:shadow-sm transition-all group">
-                                <div className="flex items-center space-x-4">
-                                    <div className={`w-10 h-10 rounded-full flex items-center justify-center ${exp.status==='Pago'?'bg-emerald-100 text-emerald-600':'bg-amber-100 text-amber-600'}`}>
-                                        {exp.categoria.includes('Cartão') ? <CreditCard size={18}/> : exp.categoria.includes('Pneu') ? <Target size={18}/> : <Receipt size={18}/>}
-                                    </div>
-                                    <div>
-                                        <div className="font-bold text-sm text-slate-800 flex items-center">{exp.descricao} {exp.anexo && <Paperclip size={12} className="ml-2 text-blue-500"/>}</div>
-                                        <div className="text-[10px] text-slate-500 mt-1">{exp.categoria} • Orçado: {formatCurrency(exp.valorPrevisto)}</div>
-                                    </div>
-                                </div>
-                                <div className="flex items-center space-x-4">
-                                    <div className="text-right">
-                                        <div className="font-bold text-rose-600">{formatCurrency(exp.valor)}</div>
-                                        <div className={`text-[9px] font-bold uppercase mt-1 ${exp.status==='Pago'?'text-emerald-600':'text-amber-600'}`}>{exp.status}</div>
-                                    </div>
-                                    <div className="flex space-x-1 opacity-0 group-hover:opacity-100 md:opacity-100 transition-opacity">
-                                        <button onClick={()=>loadExpense(exp)} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded"><Edit size={14}/></button>
-                                        <button onClick={()=>setDeleteTarget({id:exp.id,type:'expense'})} className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded"><Trash2 size={14}/></button>
-                                    </div>
-                                </div>
+
+                <div className="md:col-span-2 bg-white rounded-3xl shadow-sm border border-slate-100 p-6 flex flex-col h-[600px]">
+                   <h3 className="text-sm font-bold text-slate-800 mb-4 flex justify-between items-center">
+                     <span>Histórico de Pagamentos & Compras</span>
+                     <span className="text-xs bg-rose-100 text-rose-700 px-3 py-1 rounded-full font-bold">Total: {formatCurrency(ind.tDespExt)}</span>
+                   </h3>
+                   <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar space-y-3">
+                      {expenses.length === 0 ? <p className="text-sm text-slate-400 text-center mt-10">Nenhuma despesa registrada.</p> : expenses.map(exp => (
+                        <div key={exp.id} className="group flex flex-col md:flex-row md:items-center justify-between p-4 bg-slate-50/50 rounded-2xl border border-slate-200 hover:border-blue-300 transition-all">
+                          <div className="flex items-start space-x-4 mb-3 md:mb-0">
+                            <div className="w-10 h-10 rounded-full flex shrink-0 items-center justify-center bg-slate-200 text-slate-500">
+                               {exp.categoria.includes('Cartão') ? <CreditCard size={18}/> : exp.categoria.includes('Pneu') ? <Target size={18}/> : <Receipt size={18}/>}
                             </div>
-                        ))}
+                            <div>
+                              <div className="font-bold text-slate-800 text-sm cursor-pointer hover:text-blue-600" onClick={()=>loadExpense(exp)}>{exp.descricao} <Edit size={10} className="inline ml-1 opacity-50"/></div>
+                              <div className="text-[10px] text-slate-500 mt-0.5">{exp.categoria} • {exp.data.split('-').reverse().join('/')}</div>
+                              {exp.linkAnexo && <a href={exp.linkAnexo} target="_blank" className="text-[10px] text-blue-500 flex items-center mt-1"><Paperclip size={10} className="mr-1"/> Ver Anexo</a>}
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between md:justify-end md:space-x-4 w-full md:w-auto border-t md:border-0 border-slate-200 pt-3 md:pt-0">
+                            <div className="text-right">
+                              {exp.valorPrevisto > 0 && <div className="text-[10px] text-slate-400 line-through">Prev: {formatCurrency(exp.valorPrevisto)}</div>}
+                              <div className="font-bold text-rose-600 text-lg">{formatCurrency(exp.valor)}</div>
+                            </div>
+                            <button onClick={() => setDeleteTarget({id: exp.id, type: 'expense'})} className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors shrink-0"><Trash2 size={16}/></button>
+                          </div>
                         </div>
-                    )}
+                      ))}
+                   </div>
                 </div>
             </div>
         </div>
       );
   };
 
-  const renderFormulario = () => {
-    return (
-    <div className="space-y-6 pb-24 md:pb-6 max-w-4xl mx-auto animate-in fade-in duration-500">
-      <div className="flex items-start justify-between">
-        <div><h1 className="text-2xl font-bold text-slate-900">{editId.type === 'trip' ? 'Editar Viagem' : 'Lançamento de Viagem (Soja)'}</h1><p className="text-sm text-slate-500 mt-1 flex items-center"><Lightbulb size={16} className="text-amber-500 mr-2"/>Gera a DRE Operacional automaticamente.</p></div>
-      </div>
-
-      <div className="bg-white rounded-3xl shadow-sm border border-slate-100 p-6 md:p-8 space-y-8">
-        
-        {/* Identificação */}
-        <div>
-          <h3 className="text-sm font-bold text-slate-800 mb-3"><Truck size={16} className="inline mr-2 text-blue-500"/> 1. Identificação</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div><span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Veículo</span><select value={form.veiculoId} onChange={e => setForm({...form, veiculoId: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-100 text-sm"><option value="">Selecione na Frota</option>{vehicles.map(v => <option key={v.id} value={v.id}>{v.placa} ({v.tipo})</option>)}</select></div>
-            <div><span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Condutor</span><select value={form.motorista} onChange={e => setForm({...form, motorista: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-100 text-sm"><option value="">Selecione o Motorista</option>{drivers.map(d => <option key={d.id} value={d.nome}>{d.nome}</option>)}</select></div>
-          </div>
-        </div>
-
-        {/* Rota e KM */}
-        <div className="pt-6 border-t border-slate-100">
-          <div className="flex flex-col md:flex-row md:justify-between md:items-center mb-3">
-            <h3 className="text-sm font-bold text-slate-800 flex items-center"><Navigation size={16} className="mr-2 text-blue-500"/> 2. Rota, Datas e KM</h3>
-            <label className="flex items-center space-x-2 bg-blue-50 hover:bg-blue-100 px-4 py-2 rounded-lg border border-blue-200 cursor-pointer transition-colors mt-2 md:mt-0">
-              <input type="checkbox" checked={form.idaEVolta} onChange={e => setForm({...form, idaEVolta: e.target.checked})} className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500" />
-              <span className="text-xs font-semibold text-blue-800">Ida e Volta (Calcula KM Vazio)</span>
-            </label>
-          </div>
-          
-          <div className="grid grid-cols-2 gap-4 mb-4">
-            <div><span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Data Saída</span><input type="date" value={form.dataSaida} onChange={e => setForm({...form, dataSaida: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none" /></div>
-            <div><span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Retorno Efetivo</span><input type="date" value={form.dataRetorno} onChange={e => setForm({...form, dataRetorno: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none" title="Deixe em branco se a viagem ainda não terminou."/></div>
-            <div className="col-span-2 md:col-span-1"><span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Origem (Cidade)</span><input type="text" value={form.origem} onChange={e => setForm({...form, origem: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-blue-100" /></div>
-            <div className="col-span-2 md:col-span-1"><span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Destino (Cidade)</span><input type="text" value={form.destino} onChange={e => setForm({...form, destino: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-blue-100" /></div>
-          </div>
-          
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-            <div className="col-span-2 md:col-span-1"><span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Odômetro Saída</span><input type="number" value={form.kmInicial} onChange={handleKmInicialChange} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-blue-100" /></div>
-            <div className="col-span-2 md:col-span-1"><span className="text-[10px] uppercase font-bold text-blue-500 block mb-1">Odômetro Chegada</span><input type="number" value={form.kmFinal} onChange={e => setForm({...form, kmFinal: e.target.value})} className="w-full bg-blue-50 border border-blue-200 rounded-xl px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-blue-300 font-bold text-blue-800" title="Auto-calculado pela estimativa, mas editável."/></div>
-            <div><span className="text-[10px] uppercase font-bold text-emerald-600 block mb-1">Peso Fazenda (t)</span><input type="number" value={form.cargaSaida} onChange={e => setForm({...form, cargaSaida: e.target.value})} className="w-full bg-emerald-50 border border-emerald-100 rounded-xl px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-emerald-200 font-semibold text-emerald-700" /></div>
-            <div><span className="text-[10px] uppercase font-bold text-rose-500 block mb-1">Peso Balança (t)</span><input type="number" value={form.cargaChegada} onChange={e => setForm({...form, cargaChegada: e.target.value})} className="w-full bg-rose-50 border border-rose-100 rounded-xl px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-rose-200 font-semibold text-rose-700" title="P/ cálculo de quebra"/></div>
-            <div><span className="text-[10px] uppercase font-bold text-amber-500 block mb-1">Horas Espera</span><input type="number" value={form.horasEspera} onChange={e => setForm({...form, horasEspera: e.target.value})} className="w-full bg-amber-50 border border-amber-100 rounded-xl px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-amber-200 font-semibold text-amber-700" /></div>
-          </div>
-        </div>
-
-        {/* Receitas */}
-        <div className="pt-6 border-t border-slate-100">
-          <h3 className="text-sm font-bold text-emerald-600 mb-3 flex items-center"><Target size={16} className="mr-2"/> 3. Receitas (Faturamento)</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200">
-              <span className="text-[10px] font-bold text-slate-400 uppercase block mb-3">Valor Orçado/Previsto</span>
-              <div className="space-y-3">
-                 <input type="number" placeholder="Frete Ida Previsto" value={form.freteIdaPrev} onChange={e => setForm({...form, freteIdaPrev: e.target.value})} className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2" />
-                 <input type="number" placeholder="Frete Retorno Previsto" value={form.freteVoltaPrev} onChange={e => setForm({...form, freteVoltaPrev: e.target.value})} disabled={!form.idaEVolta} className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none disabled:opacity-50" />
-              </div>
-            </div>
-            <div className="bg-emerald-50/50 p-5 rounded-2xl border border-emerald-100">
-              <span className="text-[10px] font-bold text-emerald-600 uppercase block mb-3">Geração de NF / Efetivo</span>
-              <div className="space-y-3">
-                 <input type="number" placeholder="Frete Ida Real" value={form.freteIda} onChange={e => setForm({...form, freteIda: e.target.value})} className="w-full bg-white border border-emerald-200 rounded-xl px-4 py-3 text-sm font-bold text-emerald-800 outline-none" />
-                 <input type="number" placeholder="Frete Retorno Real" value={form.freteVolta} onChange={e => setForm({...form, freteVolta: e.target.value})} disabled={!form.idaEVolta} className="w-full bg-white border border-emerald-200 rounded-xl px-4 py-3 text-sm font-bold text-emerald-800 outline-none disabled:opacity-50" />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Despesas */}
-        <div className="pt-6 border-t border-slate-100">
-          <h3 className="text-sm font-bold text-rose-600 mb-3 flex items-center"><TrendingDown size={16} className="mr-2"/> 4. Despesas Operacionais Relacionadas</h3>
-          <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
-            <div className="col-span-2"><span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Combustível (Prev.)</span><input type="number" value={form.combustivelPrev} onChange={e => setForm({...form, combustivelPrev: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none" /></div>
-            <div className="col-span-2"><span className="text-[10px] uppercase font-bold text-rose-500 block mb-1">Custo Total Combustível</span><input type="number" value={form.combustivel} onChange={e => setForm({...form, combustivel: e.target.value})} className="w-full bg-rose-50 border border-rose-100 rounded-xl px-4 py-3 text-sm font-bold text-rose-800 outline-none" /></div>
-            <div className="col-span-2 md:col-span-2"><span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Litros (Média)</span><input type="number" value={form.litros} onChange={e => setForm({...form, litros: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none" /></div>
-            <div><span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Qtd Diárias</span><input type="number" value={form.qtdDiarias} onChange={e => setForm({...form, qtdDiarias: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none" /></div>
-            <div><span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">R$ / Diária</span><input type="number" value={form.valorDiaria} onChange={e => setForm({...form, valorDiaria: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none" /></div>
-            <div><span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Aliment. Extra</span><input type="number" value={form.alimentacao} onChange={e => setForm({...form, alimentacao: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none" /></div>
-            <div><span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Hotel/Estac.</span><input type="number" value={form.hotel} onChange={e => setForm({...form, hotel: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none" /></div>
-          </div>
-        </div>
-
-        <div className="flex space-x-3 pt-6">
-          {editId.type && <button onClick={resetForm} className="flex-1 bg-slate-100 font-bold py-4 rounded-xl text-slate-700 hover:bg-slate-200 transition-colors">Cancelar</button>}
-          <button onClick={handleSalvarViagem} className="flex-[2] bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white font-bold py-4 rounded-xl transition-all shadow-md flex justify-center items-center text-base">
-            <Save size={18} className="mr-2" /> {editId.type ? 'Salvar Alterações da Viagem' : 'Registrar e Finalizar Viagem'}
-          </button>
-        </div>
-      </div>
-    </div>
-  )};
-
   const renderCadastros = () => (
-    <div className="space-y-8 pb-24 md:pb-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div><h1 className="text-2xl font-bold text-slate-900">Cadastros e Frota</h1><p className="text-sm text-slate-500">Gerencie seus ativos para uso nos lançamentos.</p></div>
-      
-      {/* CAMINHÕES */}
+    <div className="space-y-6 pb-24 md:pb-6 animate-in fade-in max-w-5xl mx-auto">
       <div className="bg-white rounded-3xl shadow-sm border border-slate-100 p-6 md:p-8">
-        <h3 className="text-base font-bold text-slate-800 mb-4 flex items-center"><Truck size={20} className="mr-2 text-blue-500"/> Gestão de Caminhões</h3>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-          <div><span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Placa</span><input type="text" placeholder="ABC-1234" value={novoCaminhao.placa} onChange={e=>setNovoCaminhao({...novoCaminhao,placa:e.target.value.toUpperCase()})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none text-sm uppercase" /></div>
-          <div><span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Modelo</span><input type="text" placeholder="Volvo FH" value={novoCaminhao.modelo} onChange={e=>setNovoCaminhao({...novoCaminhao,modelo:e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none text-sm" /></div>
-          <div><span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Capacidade (t)</span><input type="number" placeholder="50" value={novoCaminhao.capacidade} onChange={e=>setNovoCaminhao({...novoCaminhao,capacidade:e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none text-sm" /></div>
-          <div><span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Tipo de Frota</span><select value={novoCaminhao.tipo} onChange={e=>setNovoCaminhao({...novoCaminhao,tipo:e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none text-sm"><option value="Próprio">Próprio</option><option value="Locado">Locado</option></select></div>
+        <h3 className="text-base font-bold text-slate-800 mb-4 flex items-center"><Truck size={20} className="mr-2 text-blue-500"/> Frota de Caminhões</h3>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
+          <div><span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Placa</span><input type="text" placeholder="Ex: ABC-1234" value={novoCaminhao.placa} onChange={e => setNovoCaminhao({...novoCaminhao, placa: e.target.value.toUpperCase()})} className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 outline-none uppercase text-sm" /></div>
+          <div><span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Modelo</span><input type="text" placeholder="Ex: Volvo FH" value={novoCaminhao.modelo} onChange={e => setNovoCaminhao({...novoCaminhao, modelo: e.target.value})} className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 outline-none text-sm" /></div>
+          <div><span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Capacidade (t)</span><input type="number" placeholder="Ex: 50" value={novoCaminhao.capacidade} onChange={e => setNovoCaminhao({...novoCaminhao, capacidade: e.target.value})} className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 outline-none text-sm" /></div>
+          <div><span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Tipo</span>
+            <select value={novoCaminhao.tipo} onChange={e => setNovoCaminhao({...novoCaminhao, tipo: e.target.value})} className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 outline-none text-sm"><option value="Próprio">Próprio</option><option value="Locado">Locado/Terceirizado</option></select>
+          </div>
         </div>
         <div className="flex space-x-2">
-          {editId.type === 'vehicle' && <button onClick={()=>{setEditId({type:null,id:null});setNovoCaminhao({ placa: '', modelo: '', capacidade: '', tipo: 'Próprio' });}} className="bg-slate-100 font-bold py-3 px-6 rounded-xl">Cancelar</button>}
-          <button onClick={handleAddCaminhao} className="flex-1 bg-slate-800 hover:bg-slate-900 text-white font-bold py-3 rounded-xl">{editId.type === 'vehicle' ? 'Atualizar Veículo' : 'Adicionar Veículo'}</button>
+           {editId.type === 'vehicle' && <button onClick={()=>{setNovoCaminhao({placa:'', modelo:'', capacidade:'', tipo:'Próprio'}); setEditId({type:null,id:null});}} className="flex-1 bg-slate-100 text-slate-600 font-bold py-3 rounded-xl">Cancelar</button>}
+           <button onClick={handleAddCaminhao} className="flex-[2] bg-slate-800 hover:bg-slate-900 text-white font-bold py-3 rounded-xl transition-all shadow-md">{editId.type === 'vehicle' ? 'Atualizar Veículo' : 'Cadastrar Veículo'}</button>
         </div>
-        
-        <div className="mt-6 border-t border-slate-100 pt-4 grid grid-cols-1 md:grid-cols-2 gap-3 max-h-48 overflow-y-auto">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-6">
           {vehicles.map(v => (
-            <div key={v.id} className="flex justify-between items-center bg-slate-50 p-3 rounded-xl border border-slate-200 group hover:border-blue-300">
-              <div><div className="text-sm font-bold text-slate-800">{v.placa}</div><div className="text-xs text-slate-500">{v.modelo} • {v.tipo}</div></div>
-              <div className="flex space-x-1 opacity-0 group-hover:opacity-100 md:opacity-100"><button onClick={()=>loadVehicle(v)} className="p-2 text-slate-400 hover:text-blue-600"><Edit size={14}/></button><button onClick={()=>setDeleteTarget({id:v.id,type:'vehicle'})} className="p-2 text-slate-400 hover:text-rose-600"><Trash2 size={14}/></button></div>
+            <div key={v.id} className="flex justify-between items-center bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
+              <div className="cursor-pointer group" onClick={()=>{setNovoCaminhao({placa:v.placa, modelo:v.modelo, capacidade:v.capacidade||'', tipo:v.tipo}); setEditId({type:'vehicle', id:v.id});}}>
+                <div className="text-sm font-bold text-slate-800 group-hover:text-blue-600 flex items-center">{v.placa} <Edit size={12} className="ml-2 opacity-0 group-hover:opacity-100"/></div>
+                <div className="text-xs text-slate-500">{v.modelo} • {v.tipo} • {v.capacidade}t</div>
+              </div>
+              <button onClick={() => setDeleteTarget({id: v.id, type: 'vehicle'})} className="text-rose-400 hover:text-rose-600 p-2"><Trash2 size={16}/></button>
             </div>
           ))}
         </div>
       </div>
 
-      {/* MOTORISTAS */}
       <div className="bg-white rounded-3xl shadow-sm border border-slate-100 p-6 md:p-8">
         <h3 className="text-base font-bold text-slate-800 mb-4 flex items-center"><User size={20} className="mr-2 text-blue-500"/> Gestão de Motoristas</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-          <div><span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Nome</span><input type="text" placeholder="Nome Completo" value={novoMotorista.nome} onChange={e=>setNovoMotorista({...novoMotorista,nome:e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none text-sm" /></div>
-          <div><span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">CNH</span><input type="text" placeholder="Documento" value={novoMotorista.cnh} onChange={e=>setNovoMotorista({...novoMotorista,cnh:e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none text-sm" /></div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
+          <div><span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Nome Completo</span><input type="text" placeholder="Nome do motorista" value={novoMotorista.nome} onChange={e => setNovoMotorista({...novoMotorista, nome: e.target.value})} className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 outline-none text-sm" /></div>
+          <div><span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Documento / CNH</span><input type="text" placeholder="Apenas números" value={novoMotorista.cnh} onChange={e => setNovoMotorista({...novoMotorista, cnh: e.target.value})} className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 outline-none text-sm" /></div>
         </div>
-        <button onClick={handleAddMotorista} className="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-3 rounded-xl">Adicionar Motorista</button>
-        
-        <div className="mt-6 border-t border-slate-100 pt-4 grid grid-cols-1 md:grid-cols-2 gap-3 max-h-48 overflow-y-auto">
+        <div className="flex space-x-2">
+           {editId.type === 'driver' && <button onClick={()=>{setNovoMotorista({nome:'', cnh:''}); setEditId({type:null,id:null});}} className="flex-1 bg-slate-100 text-slate-600 font-bold py-3 rounded-xl">Cancelar</button>}
+           <button onClick={handleAddMotorista} className="flex-[2] bg-slate-800 hover:bg-slate-900 text-white font-bold py-3 rounded-xl transition-all shadow-md">{editId.type === 'driver' ? 'Atualizar Motorista' : 'Cadastrar Motorista'}</button>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-6">
           {drivers.map(d => (
-            <div key={d.id} className="flex justify-between items-center bg-slate-50 p-3 rounded-xl border border-slate-200 group">
-              <div><div className="text-sm font-bold text-slate-800">{d.nome}</div><div className="text-xs text-slate-500">{d.cnh}</div></div>
-              <button onClick={()=>setDeleteTarget({id:d.id,type:'driver'})} className="p-2 text-slate-400 hover:text-rose-600 opacity-0 group-hover:opacity-100 md:opacity-100"><Trash2 size={14}/></button>
+            <div key={d.id} className="flex justify-between items-center bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
+              <div className="cursor-pointer group" onClick={()=>{setNovoMotorista({nome:d.nome, cnh:d.cnh}); setEditId({type:'driver', id:d.id});}}>
+                <div className="text-sm font-bold text-slate-800 group-hover:text-blue-600 flex items-center">{d.nome} <Edit size={12} className="ml-2 opacity-0 group-hover:opacity-100"/></div>
+                <div className="text-xs text-slate-500">CNH: {d.cnh || 'Não informada'}</div>
+              </div>
+              <button onClick={() => setDeleteTarget({id: d.id, type: 'driver'})} className="text-rose-400 hover:text-rose-600 p-2"><Trash2 size={16}/></button>
             </div>
           ))}
         </div>
       </div>
     </div>
   );
+
+  const renderNewTrip = () => {
+    return (
+    <div className="space-y-6 pb-24 md:pb-6 max-w-4xl mx-auto animate-in fade-in">
+      <div className="flex items-center justify-between">
+         <h1 className="text-2xl font-bold tracking-tight text-slate-900">{editId.type === 'trip' ? 'Editando Viagem' : 'Lançamento de Viagem'}</h1>
+         {editId.type === 'trip' && <button onClick={resetForm} className="bg-slate-100 text-slate-600 px-4 py-2 rounded-xl text-sm font-bold">Cancelar Edição</button>}
+      </div>
+
+      <div className="bg-white rounded-3xl shadow-sm border border-slate-100 p-6 md:p-8 space-y-8">
+        <div>
+          <h3 className="text-sm font-bold text-slate-800 mb-2 flex items-center"><Truck size={18} className="mr-2 text-blue-500"/> 1. Qual caminhão e quem vai dirigir?</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <select value={form.veiculoId} onChange={e => setForm({...form, veiculoId: e.target.value})} className="w-full bg-slate-50 border border-slate-200 text-slate-800 rounded-xl px-4 py-3 outline-none">
+              <option value="">Selecione o Caminhão</option>{vehicles.map(v => <option key={v.id} value={v.id}>{v.placa} ({v.tipo})</option>)}
+            </select>
+            <select value={form.motorista} onChange={e => setForm({...form, motorista: e.target.value})} className="w-full bg-slate-50 border border-slate-200 text-slate-800 rounded-xl px-4 py-3 outline-none">
+              <option value="">Selecione o Motorista</option>{drivers.map(d => <option key={d.id} value={d.nome}>{d.nome}</option>)}
+            </select>
+          </div>
+        </div>
+
+        <div className="pt-6 border-t border-slate-100">
+          <div className="flex flex-col md:flex-row md:justify-between md:items-center mb-4">
+            <h3 className="text-sm font-bold text-slate-800 flex items-center"><Navigation size={18} className="mr-2 text-blue-500"/> 2. Rota e Operação</h3>
+            <label className="flex items-center space-x-2 bg-blue-50 hover:bg-blue-100 px-4 py-2 rounded-lg border border-blue-200 cursor-pointer transition-colors mt-2 md:mt-0">
+              <input type="checkbox" checked={form.idaEVolta} onChange={e => setForm({...form, idaEVolta: e.target.checked})} className="w-4 h-4 text-blue-600 rounded" />
+              <span className="text-xs font-semibold text-blue-800">A viagem tem Ida e Volta?</span>
+            </label>
+          </div>
+          <div className="grid grid-cols-2 gap-4 mb-4">
+            <div className="col-span-2 md:col-span-1"><span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Saída (Data e Local)</span><div className="flex space-x-2"><input type="date" value={form.dataSaida} onChange={e=>setForm({...form, dataSaida: e.target.value})} className="w-1/3 bg-slate-50 border border-slate-200 rounded-xl px-2 py-3 text-xs outline-none"/><input type="text" placeholder="Origem" value={form.origem} onChange={e => setForm({...form, origem: e.target.value})} className="w-2/3 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none text-sm" /></div></div>
+            <div className="col-span-2 md:col-span-1"><span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Retorno/Chegada (Data e Local)</span><div className="flex space-x-2"><input type="date" value={form.dataRetorno} onChange={e=>setForm({...form, dataRetorno: e.target.value})} className="w-1/3 bg-slate-50 border border-slate-200 rounded-xl px-2 py-3 text-xs outline-none"/><input type="text" placeholder="Destino" value={form.destino} onChange={e => setForm({...form, destino: e.target.value})} className="w-2/3 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none text-sm" /></div></div>
+          </div>
+          
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <div className="relative md:col-span-1 col-span-2"><MapPin size={14} className="absolute left-3 top-3.5 text-slate-400" /><input type="number" placeholder="Km Inicial" value={form.kmInicial} onChange={handleKmInicialChange} className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-2 py-3 text-sm outline-none" /><span className="text-[9px] text-slate-400 ml-1">Odômetro saída</span></div>
+            <div className="relative md:col-span-1 col-span-2"><MapPin size={14} className="absolute left-3 top-3.5 text-blue-500" /><input type="number" placeholder="Km Final" value={form.kmFinal} onChange={e => setForm({...form, kmFinal: e.target.value})} className="w-full bg-blue-50 border border-blue-200 rounded-xl pl-8 pr-2 py-3 text-sm font-bold text-blue-800 outline-none" /><span className="text-[9px] text-blue-500 ml-1">Odômetro chegada {distanciaEst>0&&"(Auto)"}</span></div>
+            <div className="relative"><Scale size={14} className="absolute left-3 top-3.5 text-emerald-500" /><input type="number" placeholder="Peso Saída" value={form.cargaSaida} onChange={e => setForm({...form, cargaSaida: e.target.value})} className="w-full bg-emerald-50 border border-emerald-100 rounded-xl pl-8 pr-2 py-3 text-sm font-semibold text-emerald-800 outline-none" /><span className="text-[9px] text-emerald-600 ml-1">Tons na fazenda</span></div>
+            <div className="relative"><Scale size={14} className="absolute left-3 top-3.5 text-rose-500" /><input type="number" placeholder="Peso Cheg." value={form.cargaChegada} onChange={e => setForm({...form, cargaChegada: e.target.value})} className="w-full bg-rose-50 border border-rose-100 rounded-xl pl-8 pr-2 py-3 text-sm font-semibold text-rose-800 outline-none" /><span className="text-[9px] text-rose-500 ml-1">Tons na balança</span></div>
+            <div className="relative"><Clock size={14} className="absolute left-3 top-3.5 text-amber-500" /><input type="number" placeholder="Horas" value={form.horasEspera} onChange={e => setForm({...form, horasEspera: e.target.value})} className="w-full bg-amber-50 border border-amber-100 rounded-xl pl-8 pr-2 py-3 text-sm font-semibold text-amber-800 outline-none" /><span className="text-[9px] text-amber-600 ml-1">Espera/Carga</span></div>
+          </div>
+        </div>
+
+        <div className="pt-6 border-t border-slate-100">
+          <h3 className="text-sm font-bold text-emerald-600 mb-4 flex items-center"><Target size={18} className="mr-2"/> 3. Faturamento de Frete</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-3 bg-slate-50 p-5 rounded-2xl border border-slate-200">
+              <span className="text-xs font-bold text-slate-500 uppercase block mb-1">Valor Orçado (Previsto)</span>
+              <div className="flex space-x-2">
+                 <div className="relative flex-1"><DollarSign size={16} className="absolute left-3 top-3.5 text-slate-400" /><input type="number" placeholder="Ida" value={form.freteIdaPrev} onChange={e => setForm({...form, freteIdaPrev: e.target.value})} className="w-full bg-white border border-slate-200 rounded-xl pl-8 pr-2 py-3 text-sm outline-none" /></div>
+                 <div className="relative flex-1"><DollarSign size={16} className="absolute left-3 top-3.5 text-slate-400" /><input type="number" placeholder="Volta" value={form.freteVoltaPrev} onChange={e => setForm({...form, freteVoltaPrev: e.target.value})} disabled={!form.idaEVolta} className="w-full bg-white border border-slate-200 rounded-xl pl-8 pr-2 py-3 text-sm outline-none disabled:opacity-50" /></div>
+              </div>
+            </div>
+            <div className="space-y-3 bg-emerald-50/50 p-5 rounded-2xl border border-emerald-100">
+              <span className="text-xs font-bold text-emerald-700 uppercase block mb-1">Valor Realizado (NF Efetiva)</span>
+              <div className="flex space-x-2">
+                 <div className="relative flex-1"><DollarSign size={16} className="absolute left-3 top-3.5 text-emerald-600" /><input type="number" placeholder="Ida Real" value={form.freteIda} onChange={e => setForm({...form, freteIda: e.target.value})} className="w-full bg-white border border-emerald-200 rounded-xl pl-8 pr-2 py-3 text-sm font-bold text-emerald-900 outline-none shadow-sm" /></div>
+                 <div className="relative flex-1"><DollarSign size={16} className="absolute left-3 top-3.5 text-emerald-600" /><input type="number" placeholder="Volta Real" value={form.freteVolta} onChange={e => setForm({...form, freteVolta: e.target.value})} disabled={!form.idaEVolta} className="w-full bg-white border border-emerald-200 rounded-xl pl-8 pr-2 py-3 text-sm font-bold text-emerald-900 outline-none shadow-sm disabled:opacity-50" /></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="pt-6 border-t border-slate-100">
+          <h3 className="text-sm font-bold text-rose-600 mb-4 flex items-center"><TrendingDown size={18} className="mr-2"/> 4. Custos e Despesas Operacionais</h3>
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-4">
+            <div className="relative col-span-2"><Fuel size={14} className="absolute left-3 top-3.5 text-slate-400" /><input type="number" placeholder="R$ Previsto Comb." value={form.combustivelPrev} onChange={e => setForm({...form, combustivelPrev: e.target.value})} className="w-full bg-slate-50 border border-rose-100 rounded-xl pl-8 pr-2 py-3 text-sm outline-none" /><span className="text-[9px] text-slate-400 ml-1">Meta Combustível</span></div>
+            <div className="relative col-span-2"><Fuel size={14} className="absolute left-3 top-3.5 text-rose-500" /><input type="number" placeholder="R$ Gasto Real Comb." value={form.combustivel} onChange={e => setForm({...form, combustivel: e.target.value})} className="w-full bg-rose-50 border border-rose-200 rounded-xl pl-8 pr-2 py-3 text-sm font-bold text-rose-800 outline-none" /><span className="text-[9px] text-rose-500 ml-1">Gasto na bomba</span></div>
+            <div className="relative col-span-2"><Droplet size={14} className="absolute left-3 top-3.5 text-slate-400" /><input type="number" placeholder="Litros Abastecidos" value={form.litros} onChange={e => setForm({...form, litros: e.target.value})} className="w-full bg-slate-50 border border-rose-100 rounded-xl pl-8 pr-2 py-3 text-sm outline-none" /><span className="text-[9px] text-slate-400 ml-1">Volume total</span></div>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="relative"><Hash size={14} className="absolute left-3 top-3.5 text-slate-400" /><input type="number" placeholder="Qtd Diárias" value={form.qtdDiarias} onChange={e => setForm({...form, qtdDiarias: e.target.value})} className="w-full bg-slate-50 border border-rose-100 rounded-xl pl-8 pr-2 py-3 text-sm outline-none" /></div>
+            <div className="relative"><Wallet size={14} className="absolute left-3 top-3.5 text-slate-400" /><input type="number" placeholder="R$ por Diária" value={form.valorDiaria} onChange={e => setForm({...form, valorDiaria: e.target.value})} className="w-full bg-slate-50 border border-rose-100 rounded-xl pl-8 pr-2 py-3 text-sm outline-none" /></div>
+            <div className="relative"><Coffee size={14} className="absolute left-3 top-3.5 text-slate-400" /><input type="number" placeholder="R$ Alimentação" value={form.alimentacao} onChange={e => setForm({...form, alimentacao: e.target.value})} className="w-full bg-slate-50 border border-rose-100 rounded-xl pl-8 pr-2 py-3 text-sm outline-none" /></div>
+            <div className="relative"><Bed size={14} className="absolute left-3 top-3.5 text-slate-400" /><input type="number" placeholder="R$ Hotel/Pernoite" value={form.hotel} onChange={e => setForm({...form, hotel: e.target.value})} className="w-full bg-slate-50 border border-rose-100 rounded-xl pl-8 pr-2 py-3 text-sm outline-none" /></div>
+          </div>
+          
+          <div className="mt-4 border-2 border-dashed border-slate-200 rounded-xl p-4 text-center hover:bg-slate-50 transition-colors">
+            <Paperclip size={20} className="mx-auto text-slate-400 mb-2"/>
+            <span className="text-xs font-bold text-slate-600 block">Anexar CTE / Notas da Viagem</span>
+            <input type="text" placeholder="Cole o link do Google Drive/Dropbox com os documentos da viagem aqui..." value={form.linkAnexo} onChange={e => setForm({...form, linkAnexo: e.target.value})} className="mt-2 w-full text-xs bg-white border border-slate-200 p-2 rounded-lg text-center outline-none focus:border-blue-300"/>
+          </div>
+        </div>
+
+        <button onClick={handleSalvarViagem} className="w-full bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white font-bold py-5 rounded-2xl transition-all shadow-md mt-4 flex justify-center items-center text-lg">
+          <Save size={20} className="mr-3" /> {editId.type === 'trip' ? 'Atualizar Viagem' : 'Registrar Nova Viagem'}
+        </button>
+      </div>
+    </div>
+  )};
 
   return (
     <>
@@ -686,11 +680,11 @@ export default function App() {
       
       {deleteTarget && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[9999] flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl p-8 w-full max-w-sm"><h3 className="text-xl font-bold mb-3 flex items-center"><AlertCircle size={24} className="mr-3 text-rose-500"/> Confirmar</h3><p className="text-sm text-slate-600 mb-8">Excluir este registro permanentemente?</p><div className="flex space-x-3"><button onClick={() => setDeleteTarget(null)} className="flex-1 bg-slate-100 font-bold py-3 rounded-xl">Cancelar</button><button onClick={executeDelete} className="flex-1 bg-rose-600 text-white font-bold py-3 rounded-xl">Sim, Apagar</button></div></div>
+          <div className="bg-white rounded-3xl p-8 w-full max-w-sm"><h3 className="text-xl font-bold mb-3 flex items-center"><AlertCircle size={24} className="mr-3 text-rose-500"/> Confirmar</h3><div className="flex space-x-3"><button onClick={() => setDeleteTarget(null)} className="flex-1 bg-slate-100 font-bold py-3 rounded-xl">Cancelar</button><button onClick={executeDelete} className="flex-1 bg-rose-600 text-white font-bold py-3 rounded-xl">Apagar</button></div></div>
         </div>
       )}
 
-      <div className="min-h-screen bg-slate-50 md:flex print:hidden font-sans text-slate-900">
+      <div className="min-h-screen bg-slate-50 md:flex font-sans text-slate-900">
         <aside className="hidden md:flex flex-col w-72 bg-white border-r border-slate-200 fixed h-full z-10 shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
           <div className="p-8 flex items-center justify-center border-b border-slate-100 mb-4 bg-slate-50/50">
             <img src="https://i.postimg.cc/nLkYqh6N/Chat-GPT-Image-2-de-set-de-2026-10-57-35.png" alt="Logo" className="h-24 object-contain drop-shadow-md hover:scale-105 transition-transform" />
@@ -705,18 +699,16 @@ export default function App() {
 
         <main className="flex-1 md:ml-72 p-4 md:p-8 max-w-7xl mx-auto w-full pt-6 relative">
           <div className="md:hidden flex flex-col items-center mb-8 w-full"><img src="https://i.postimg.cc/nLkYqh6N/Chat-GPT-Image-2-de-set-de-2026-10-57-35.png" alt="Logo" className="h-20 object-contain drop-shadow-md" /></div>
-          
           {activeTab === 'home' && renderDashboard()}
           {activeTab === 'fluxo' && renderFluxoCaixa()}
-          {activeTab === 'new' && renderFormulario()}
+          {activeTab === 'new' && renderNewTrip()}
           {activeTab === 'cadastros' && renderCadastros()}
         </main>
         
-        {/* NAVEGAÇÃO MOBILE */}
         <nav className="md:hidden fixed bottom-0 w-full bg-white/90 backdrop-blur-md border-t border-slate-200 shadow-lg z-50 flex justify-around items-center px-1 h-20">
           <button onClick={()=>setActiveTab('home')} className={`flex flex-col items-center justify-center w-full h-full ${activeTab==='home'?'text-blue-600':'text-slate-400'}`}><Home size={22}/></button>
           <button onClick={()=>setActiveTab('fluxo')} className={`flex flex-col items-center justify-center w-full h-full ${activeTab==='fluxo'?'text-blue-600':'text-slate-400'}`}><BarChart3 size={22}/></button>
-          <button onClick={()=>{resetForm();setActiveTab('new');}} className="relative -top-6 bg-blue-600 text-white shadow-xl shadow-blue-600/30 p-4 rounded-full"><Plus size={26} strokeWidth={3} /></button>
+          <button onClick={()=>{setActiveTab('new'); resetForm();}} className="relative -top-6 bg-blue-600 text-white shadow-xl shadow-blue-600/30 p-4 rounded-full"><Plus size={26} strokeWidth={3} /></button>
           <button onClick={()=>setActiveTab('cadastros')} className={`flex flex-col items-center justify-center w-full h-full ${activeTab==='cadastros'?'text-blue-600':'text-slate-400'}`}><Database size={22}/></button>
         </nav>
       </div>
