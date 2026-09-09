@@ -66,7 +66,7 @@
       }
     ];
 
-    const MOCK_EXPENSES = [
+      const MOCK_EXPENSES = [
       { id: 'e1', descricao: '4 Pneus Michelin', categoria: 'Pneus e Borracharia', valorPrevisto: 12000, valor: 12000, data: dTresDias.toISOString().split('T')[0], status: 'Pago', linkAnexo: '', timestamp: Date.now() - 200000 }
     ];
 
@@ -207,7 +207,7 @@
 
         if (editId.type === 'trip') { 
           setTrips(p => p.map(x => x.id === editId.id ? {...x, ...docData} : x));
-          showNotification("Viagem atualizada!", "success"); 
+          showNotification("Viagem atualizada com sucesso!", "success"); 
         } else { 
           docData.numero = Math.floor(1000 + Math.random() * 9000).toString(); 
           docData.timestamp = Date.now(); 
@@ -300,10 +300,10 @@
                     off = Math.max(0, Math.min(13, off)); 
 
                     return (
-                      <div key={t.id} className="flex items-center text-xs group cursor-pointer" onClick={() => loadTrip(t)} title="Editar">
-                        <div className="w-32 truncate pr-4 text-slate-700 font-semibold flex items-center"><i data-lucide="truck" className="w-3 h-3 mr-1 text-slate-400"></i> {t.veiculoPlaca}</div>
+                      <div key={t.id} className="flex items-center text-xs group cursor-pointer hover:bg-slate-50 transition-colors rounded-lg p-1" onClick={() => loadTrip(t)} title="Clique para Editar">
+                        <div className="w-32 truncate pr-4 text-slate-700 font-semibold flex items-center group-hover:text-blue-600"><i data-lucide="truck" className="w-3 h-3 mr-1 text-slate-400 group-hover:text-blue-500"></i> {t.veiculoPlaca}</div>
                         <div className="flex-1 relative h-8 bg-slate-50 rounded-lg overflow-hidden border border-slate-100">
-                          <div className={`absolute top-0 bottom-0 rounded-lg flex items-center px-3 text-[10px] text-white font-bold truncate transition-all hover:brightness-110 shadow-sm ${t.tipoFrota==='Próprio'?'bg-blue-500': t.dataRetorno ? 'bg-emerald-500' : 'bg-amber-500'}`} style={{ left: `${(off/14)*100}%`, width: `${Math.min(100, (durDias/14)*100)}%` }}>
+                          <div className={`absolute top-0 bottom-0 rounded-lg flex items-center px-3 text-[10px] text-white font-bold truncate transition-all shadow-sm ${t.tipoFrota==='Próprio'?'bg-blue-500 hover:bg-blue-600': t.dataRetorno ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-amber-500 hover:bg-amber-600'}`} style={{ left: `${(off/14)*100}%`, width: `${Math.min(100, (durDias/14)*100)}%` }}>
                             {t.origem.split(',')[0]} → {t.destino.split(',')[0]}
                           </div>
                         </div>
@@ -311,6 +311,30 @@
                     );
                   })}
                 </div>
+              </div>
+            </div>
+
+            {/* CONSOLIDADO DE VIAGENS (NOVO BLOCO) */}
+            <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 relative">
+              <h2 className="text-sm font-bold flex items-center mb-4"><i data-lucide="list" className="mr-2 w-5 h-5 text-blue-500"></i> Consolidado de Viagens</h2>
+              
+              <div className="max-h-64 overflow-y-auto custom-scrollbar pr-2 space-y-2">
+                {trips.length === 0 ? <p className="text-xs text-slate-400 text-center">Nenhuma viagem encontrada.</p> : trips.map(t => (
+                  <div key={t.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-200 hover:border-blue-300 transition-colors">
+                    <div className="flex flex-col cursor-pointer flex-1" onClick={() => loadTrip(t)}>
+                      <span className="text-sm font-bold text-slate-800 hover:text-blue-600 transition-colors">{t.origem} → {t.destino}</span>
+                      <span className="text-xs text-slate-500 mt-1">{t.veiculoPlaca} • {t.motorista} • {t.dataSaida}</span>
+                    </div>
+                    <div className="flex items-center space-x-2 pl-4 border-l border-slate-200 ml-4">
+                      <button onClick={() => loadTrip(t)} className="text-blue-500 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 p-2 rounded-lg transition-colors flex items-center">
+                        <i data-lucide="edit" className="w-4 h-4 mr-1"></i> <span className="text-xs font-bold hidden md:inline">Editar</span>
+                      </button>
+                      <button onClick={() => setDeleteTarget({id: t.id, type: 'trip'})} className="text-rose-500 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 p-2 rounded-lg transition-colors flex items-center">
+                        <i data-lucide="trash-2" className="w-4 h-4 mr-1"></i> <span className="text-xs font-bold hidden md:inline">Excluir</span>
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
 
